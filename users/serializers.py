@@ -50,9 +50,13 @@ class UserRegistrationSerializer(serializers.Serializer):
         )
         return user
 
-
 class UserLoginSerializer(serializers.Serializer):
-    email = serializers.EmailField(required=True)
+    email = serializers.EmailField(required=False)
+    username = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        max_length=150
+    )
     password = serializers.CharField(
         write_only=True,
         required=True,
@@ -60,14 +64,39 @@ class UserLoginSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
-        email = attrs.get('email', '').strip().lower()
+        email = attrs.get('email')
+        username = attrs.get('username')
         password = attrs.get('password', '')
 
-        user = User.objects.filter(email__iexact=email).first()
+        if not email and not username:
+            raise serializers.ValidationError(
+                "Email or username is required."
+            )
 
-        # Generic authentication failure message to prevent account enumeration
-        if user is None or not user.check_password(password) or not user.is_active:
-            raise serializers.ValidationError("Invalid email or password.")
+        if email and username:
+            raise serializers.ValidationError(
+                "Enter either email or username, not both."
+            )
+
+        if email:
+            user = User.objects.filter(
+                email__iexact=email.strip()
+            ).first()
+            login_field = "email"
+        else:
+            user = User.objects.filter(
+                username__iexact=username.strip()
+            ).first()
+            login_field = "username"
+
+        if (
+            user is None
+            or not user.check_password(password)
+            or not user.is_active
+        ):
+            raise serializers.ValidationError(
+                f"Invalid {login_field} or password."
+            )
 
         attrs['user'] = user
         return attrs
