@@ -5,5 +5,5 @@ urlpatterns = [
     path('', ProjectListCreateView.as_view(), name='project-list-create'),
     path('my/', MyProjectsView.as_view(), name='my-projects'),
     path('explore/', ExploreProjectsView.as_view(), name='project-explore'),
-    path('<int:pk>/', ProjectDetailView.as_view(), name='project-detail'),
+    path('<uuid:public_id>/', ProjectDetailView.as_view(), name='project-detail'),
 ]

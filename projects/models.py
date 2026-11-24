@@ -2,6 +2,7 @@ from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator
 from django.db.models.functions import Lower
+import uuid
 
 
 class Skill(models.Model):
@@ -51,12 +52,18 @@ class Project(models.Model):
     PROJECT_TYPE_OTHER = 'other'
 
     PROJECT_TYPE_CHOICES = [
-        (PROJECT_TYPE_STARTUP, 'استارتاپ'),
-        (PROJECT_TYPE_LEARNING, 'آموزشی'),
-        (PROJECT_TYPE_RESEARCH, 'پژوهشی'),
-        (PROJECT_TYPE_PERSONAL, 'شخصی'),
-        (PROJECT_TYPE_OTHER, 'سایر'),
+        (PROJECT_TYPE_STARTUP, 'Startup'),
+        (PROJECT_TYPE_LEARNING, 'Learning'),
+        (PROJECT_TYPE_RESEARCH, 'Research'),
+        (PROJECT_TYPE_PERSONAL, 'Personal'),
+        (PROJECT_TYPE_OTHER, 'Other'),
     ]
+
+    public_id = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        editable=False
+    )
 
     title = models.CharField(max_length=255, verbose_name="Project Title")
     goal = models.TextField(verbose_name="Project Goal")

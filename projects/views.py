@@ -26,7 +26,7 @@ class ProjectDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
     permission_classes = [IsCreatorOrReadOnly]
-
+    lookup_field = 'public_id'
 
 
 class MyProjectsView(generics.ListAPIView):
