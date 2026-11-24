@@ -6,7 +6,19 @@ class SkillSerializer(serializers.ModelSerializer):
     class Meta:
         model = Skill
         fields = ['id', 'name']
-        
+
+class ProjectMemberSerializer(serializers.ModelSerializer):
+    user = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProjectMember
+        fields = ['user', 'joined_at']
+
+    def get_user(self, obj):
+        return {
+            'username': obj.user.username,
+            'name': obj.user.profile.name,
+        }        
 
 class ProjectSerializer(serializers.ModelSerializer):
     skills = serializers.PrimaryKeyRelatedField(
@@ -14,6 +26,9 @@ class ProjectSerializer(serializers.ModelSerializer):
         queryset=Skill.objects.all(),
         required=False
     )
+
+    accepted_count = serializers.SerializerMethodField()
+    remaining_capacity = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
@@ -24,6 +39,8 @@ class ProjectSerializer(serializers.ModelSerializer):
             'description',
             'creator',
             'capacity',
+            'accepted_count',
+            'remaining_capacity',
             'status',
             'skills',
             'created_at',
@@ -35,7 +52,11 @@ class ProjectSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]        
+    def get_accepted_count(self, obj):
+        return obj.members.count()
 
+    def get_remaining_capacity(self, obj):
+        return max(obj.capacity - self.get_accepted_count(obj), 0)
 
 class MyProjectsSerializer(ProjectSerializer):
     role = serializers.SerializerMethodField()

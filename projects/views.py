@@ -1,15 +1,23 @@
 from rest_framework import generics, serializers
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
-from .models import Project
+from .models import Project, ProjectMember
 from django.db import models
-from .serializers import ProjectSerializer,  MyProjectsSerializer
+from .serializers import (
+    ProjectSerializer,
+    MyProjectsSerializer,
+    ProjectMemberSerializer,
+)
 from rest_framework.filters import SearchFilter, OrderingFilter
 from .permissions import IsCreatorOrReadOnly
+from users.permissions import IsProfileComplete
 
 class ProjectListCreateView(generics.ListCreateAPIView):
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
-    permission_classes = [IsAuthenticatedOrReadOnly]
+    permission_classes = [
+    IsAuthenticatedOrReadOnly,
+    IsProfileComplete,
+]
 
     filter_backends = [SearchFilter]
     search_fields = ['title']
@@ -75,3 +83,12 @@ class ExploreProjectsView(generics.ListAPIView):
             ).distinct()
 
         return queryset
+
+class ProjectMembersView(generics.ListAPIView):
+    serializer_class = ProjectMemberSerializer
+    permission_classes = [IsAuthenticatedOrReadOnly]
+
+    def get_queryset(self):
+        return ProjectMember.objects.filter(
+            project_id=self.kwargs['pk']
+        ).select_related('user')

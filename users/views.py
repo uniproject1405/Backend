@@ -32,7 +32,6 @@ def users_api(request):
         "status": "success",
     })
 
-
 class RegisterView(APIView):
     """
     Register a new user with email and password.
@@ -53,7 +52,6 @@ class RegisterView(APIView):
                 status=status.HTTP_201_CREATED,
             )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 
 class LoginView(APIView):
     """
@@ -76,29 +74,36 @@ class LoginView(APIView):
             )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
 class CurrentUserView(APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        profile, created = Profile.objects.get_or_create(
-            user=request.user
-        )
+        try:
+            profile = request.user.profile
+        except Profile.DoesNotExist:
+            return Response({
+                "email": request.user.email,
+                "username": request.user.username,
+                "profile": None,
+                "message": "Please complete your profile."
+            }, status=status.HTTP_200_OK)
 
         profile_data = ProfileSerializer(profile).data
 
         return Response({
-            "id": request.user.id,
             "email": request.user.email,
             "username": request.user.username,
             "profile": profile_data
         }, status=status.HTTP_200_OK)
-
+    
     def patch(self, request):
-        profile, created = Profile.objects.get_or_create(
-            user=request.user
-        )
+        try:
+            profile = request.user.profile
+        except Profile.DoesNotExist:
+            return Response({
+                "message": "Please create your profile first."
+            }, status=status.HTTP_404_NOT_FOUND)
 
         serializer = ProfileSerializer(
             profile,
@@ -108,14 +113,46 @@ class CurrentUserView(APIView):
 
         if serializer.is_valid():
             serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
+
+            return Response({
+                "email": request.user.email,
+                "username": request.user.username,
+                "profile": serializer.data
+            }, status=status.HTTP_200_OK)
 
         return Response(
             serializer.errors,
             status=status.HTTP_400_BAD_REQUEST
         )
 
-    
+class ProfileCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def post(self, request):
+        if Profile.objects.filter(user=request.user).exists():
+            return Response(
+                {"message": "You already have a profile."},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        serializer = ProfileSerializer(data=request.data)
+
+        if serializer.is_valid():
+            profile = serializer.save(user=request.user)
+
+            return Response({
+                "email": request.user.email,
+                "username": request.user.username,
+                "profile": ProfileSerializer(profile).data,
+                "message": "Profile created successfully."
+            }, status=status.HTTP_201_CREATED)
+
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )    
+
 class LogoutView(APIView):
     """
     Invalidate the active authentication token for the current user.
