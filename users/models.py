@@ -78,6 +78,10 @@ class Profile(models.Model):
         return self.get_contact('telegram')
 
     @property
+    def instagram(self):
+        return self.get_contact('instagram')
+
+    @property
     def github(self):
         return self.get_contact('github')
 

@@ -282,6 +282,23 @@ class PartnerExploreView(generics.ListAPIView):
 
         return queryset.distinct()
 
+    def filter_queryset(self, queryset):
+        search = self.request.query_params.get('search')
+        if search and search.strip().startswith('@'):
+            cleaned_search = search.strip().lstrip('@')
+            if cleaned_search:
+                from django.db.models import Q
+                queryset = queryset.filter(
+                    Q(user__username__icontains=cleaned_search) |
+                    Q(name__icontains=cleaned_search) |
+                    Q(headline__icontains=cleaned_search) |
+                    Q(bio__icontains=cleaned_search) |
+                    Q(skills__name__icontains=cleaned_search)
+                )
+                ordering_filter = filters.OrderingFilter()
+                return ordering_filter.filter_queryset(self.request, queryset, self)
+        return super().filter_queryset(queryset)
+
 
 class PublicProfileDetailView(generics.RetrieveAPIView):
     """

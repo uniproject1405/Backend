@@ -32,6 +32,11 @@ class UserRegistrationSerializer(serializers.Serializer):
     def validate_username(self, value):
         if value:
             username = value.strip()
+            # Support usernames starting with @ like Instagram / Telegram
+            if username.startswith('@'):
+                username = username[1:].strip()
+            if not username:
+                raise serializers.ValidationError("Username cannot be empty or just '@'.")
             if User.objects.filter(username__iexact=username).exists():
                 raise serializers.ValidationError("A user with this username already exists.")
             return username
@@ -41,6 +46,8 @@ class UserRegistrationSerializer(serializers.Serializer):
         email = validated_data['email']
         password = validated_data['password']
         username = validated_data.get('username') or email
+        if username and username.startswith('@'):
+            username = username[1:].strip()
 
         user = User.objects.create_user(
             username=username,
@@ -105,6 +112,7 @@ class PublicPartnerSerializer(serializers.ModelSerializer):
     skills_to_teach = ProfileSkillSerializer(source='skills', many=True, read_only=True)
     avatar_display = serializers.SerializerMethodField()
     telegram = serializers.ReadOnlyField()
+    instagram = serializers.ReadOnlyField()
     github = serializers.ReadOnlyField()
     linkedin = serializers.ReadOnlyField()
     open_for_collaboration = serializers.ReadOnlyField(source='open_to_collaboration')
@@ -126,6 +134,7 @@ class PublicPartnerSerializer(serializers.ModelSerializer):
             'skills_to_teach',
             'contact_links',
             'telegram',
+            'instagram',
             'github',
             'linkedin',
             'open_to_collaboration',
@@ -192,6 +201,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
     last_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
     telegram = serializers.CharField(required=False, allow_blank=True)
+    instagram = serializers.CharField(required=False, allow_blank=True)
     github = serializers.CharField(required=False, allow_blank=True)
     linkedin = serializers.CharField(required=False, allow_blank=True)
     open_for_collaboration = serializers.BooleanField(source='open_to_collaboration', required=False)
@@ -219,6 +229,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'skills_to_teach_names',
             'contact_links',
             'telegram',
+            'instagram',
             'github',
             'linkedin',
             'open_to_collaboration',
@@ -254,6 +265,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
                 elif platform.lower() == 'telegram':
                     if not (url_val.startswith('@') or url_val.startswith('https://t.me/')):
                         raise serializers.ValidationError(f"Invalid Telegram handle or link: {url_val}")
+                elif platform.lower() == 'instagram':
+                    if not (url_val.startswith('@') or url_val.startswith('https://instagram.com/') or url_val.startswith('https://www.instagram.com/')):
+                        raise serializers.ValidationError(f"Invalid Instagram handle or link: {url_val}")
                 else:
                     if not (url_val.startswith('http://') or url_val.startswith('https://') or url_val.startswith('@')):
                         raise serializers.ValidationError(f"Invalid link or handle for '{platform}': {url_val}")
@@ -272,6 +286,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
                 elif platform.lower() == 'telegram':
                     if not (url_val.startswith('@') or url_val.startswith('https://t.me/')):
                         raise serializers.ValidationError(f"Invalid Telegram handle or link: {url_val}")
+                elif platform.lower() == 'instagram':
+                    if not (url_val.startswith('@') or url_val.startswith('https://instagram.com/') or url_val.startswith('https://www.instagram.com/')):
+                        raise serializers.ValidationError(f"Invalid Instagram handle or link: {url_val}")
                 else:
                     if not (url_val.startswith('http://') or url_val.startswith('https://') or url_val.startswith('@')):
                         raise serializers.ValidationError(f"Invalid URL or handle for '{platform}': {url_val}")
@@ -285,11 +302,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
         first_name = validated_data.pop('first_name', None)
         last_name = validated_data.pop('last_name', None)
         telegram = validated_data.pop('telegram', None)
+        instagram = validated_data.pop('instagram', None)
         github = validated_data.pop('github', None)
         linkedin = validated_data.pop('linkedin', None)
 
         # Update contact links if social handles were provided directly
-        if any(x is not None for x in [telegram, github, linkedin]):
+        if any(x is not None for x in [telegram, instagram, github, linkedin]):
             contact_dict = {}
             if isinstance(instance.contact_links, list):
                 for item in instance.contact_links:
@@ -300,6 +318,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
             if telegram is not None:
                 contact_dict['telegram'] = telegram.strip()
+            if instagram is not None:
+                contact_dict['instagram'] = instagram.strip()
             if github is not None:
                 contact_dict['github'] = github.strip()
             if linkedin is not None:

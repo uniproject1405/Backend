@@ -25,6 +25,27 @@ class UsersAPITest(TestCase):
         )
 
 
+class UserRegistrationTests(TestCase):
+    def test_register_user_with_at_symbol_username(self):
+        payload = {
+            "username": "@ninacoder",
+            "email": "nina@example.com",
+            "password": "strongPassword123",
+        }
+        response = self.client.post("/api/users/register/", payload, content_type="application/json")
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["user"]["username"], "ninacoder")
+
+    def test_register_user_invalid_only_at_username(self):
+        payload = {
+            "username": "@",
+            "email": "atonly@example.com",
+            "password": "strongPassword123",
+        }
+        response = self.client.post("/api/users/register/", payload, content_type="application/json")
+        self.assertEqual(response.status_code, 400)
+
+
 class GoogleAuthTests(TestCase):
     def setUp(self):
         self.endpoint = "/api/users/google/"
@@ -281,6 +302,13 @@ class PartnerExploreTests(TestCase):
         self.assertEqual(len(data), 1)
         self.assertEqual(data[0]["username"], "user_mentor")
 
+    def test_explore_search_by_username_with_at(self):
+        response = self.client.get("/api/users/explore/?search=@user_dev")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertGreaterEqual(len(data), 1)
+        self.assertEqual(data[0]["username"], "user_dev")
+
     def test_explore_discover_alias(self):
         response = self.client.get("/api/users/discover/")
         self.assertEqual(response.status_code, 200)
@@ -453,6 +481,35 @@ class MyProfileManageTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    def test_update_profile_valid_instagram_contact_links(self):
+        payload = {
+            "contact_links": [
+                {"instagram": "@my_insta_handle"},
+                {"instagram": "https://instagram.com/my_insta_handle"},
+            ]
+        }
+        response = self.client.patch(
+            "/api/users/profile/",
+            payload,
+            content_type="application/json",
+            **self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_update_profile_invalid_instagram_contact_links(self):
+        payload = {
+            "contact_links": [
+                {"instagram": "invalid-insta-without-at-or-url"},
+            ]
+        }
+        response = self.client.patch(
+            "/api/users/profile/",
+            payload,
+            content_type="application/json",
+            **self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 400)
+
 
 class CurrentUserAndCompletionTests(TestCase):
     def setUp(self):
@@ -494,6 +551,26 @@ class CurrentUserAndCompletionTests(TestCase):
         profile = Profile.objects.get(user=self.user)
         self.assertEqual(profile.bio, "Working with React and Django.")
         self.assertEqual(profile.telegram, "@moderndev")
+
+    def test_current_user_me_patch_with_instagram(self):
+        payload = {
+            "first_name": "Modern",
+            "last_name": "Dev",
+            "bio": "Working with React and Django.",
+            "telegram": "@moderndev",
+            "instagram": "@modern_insta",
+        }
+        response = self.client.patch(
+            "/api/users/me/",
+            payload,
+            content_type="application/json",
+            **self.auth_headers,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        profile = Profile.objects.get(user=self.user)
+        self.assertEqual(profile.telegram, "@moderndev")
+        self.assertEqual(profile.instagram, "@modern_insta")
 
     def test_profile_completion_unauthenticated_401(self):
         response = self.client.get("/api/users/profile/completion/")
