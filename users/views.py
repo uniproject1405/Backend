@@ -1,17 +1,22 @@
-from django.http import JsonResponse
+import urllib.parse
+from django.conf import settings
+from django.http import JsonResponse, HttpResponseRedirect
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.authtoken.models import Token
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.exceptions import AuthenticationFailed, ValidationError
 from .serializers import (
     UserRegistrationSerializer,
     UserLoginSerializer,
     UserSerializer,
+    ProfileSerializer,
+    GoogleAuthSerializer,
 )
 from .models import Profile
-from .serializers import ProfileSerializer
-from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from .services import authenticate_google, get_google_auth_url
 
 def users_api(request):
     """
@@ -169,3 +174,78 @@ class LogoutView(APIView):
             {"message": "Successfully logged out."},
             status=status.HTTP_200_OK,
         )
+
+
+class GoogleAuthView(APIView):
+    """
+    Authenticate or register a user using Google credentials (id_token, access_token, or code).
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = GoogleAuthSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user, token, is_new = authenticate_google(
+                id_token=serializer.validated_data.get('id_token'),
+                access_token=serializer.validated_data.get('access_token'),
+                code=serializer.validated_data.get('code'),
+                redirect_uri=serializer.validated_data.get('redirect_uri'),
+            )
+            return Response(
+                {
+                    "token": token.key,
+                    "user": UserSerializer(user).data,
+                    "is_new_user": is_new,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except (AuthenticationFailed, ValidationError) as e:
+            detail = e.detail if hasattr(e, "detail") else str(e)
+            return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            return Response(
+                {"detail": "Google authentication failed. Please try again."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+class GoogleLoginRedirectView(APIView):
+    """
+    Redirect users directly to Google's OAuth 2.0 consent screen.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        state = request.query_params.get("state")
+        auth_url = get_google_auth_url(state=state)
+        if request.query_params.get("format") == "json":
+            return Response({"auth_url": auth_url}, status=status.HTTP_200_OK)
+        return HttpResponseRedirect(auth_url)
+
+
+class GoogleCallbackView(APIView):
+    """
+    Handles Google OAuth redirect callbacks and forwards token to the frontend.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        code = request.query_params.get("code")
+        if not code:
+            error = request.query_params.get("error", "No code provided")
+            return Response({"detail": error}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            redirect_uri = getattr(settings, "GOOGLE_REDIRECT_URI", "")
+            user, token, _ = authenticate_google(code=code, redirect_uri=redirect_uri)
+            frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:5173")
+            target_url = (
+                f"{frontend_url}/login?"
+                f"token={token.key}&email={urllib.parse.quote(user.email)}&username={urllib.parse.quote(user.username)}"
+            )
+            return HttpResponseRedirect(target_url)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
