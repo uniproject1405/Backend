@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Skill, Project, ProjectMember
+from .models import Skill, SkillAlias, Project, ProjectMember
 
 
 class ProjectMemberInline(admin.TabularInline):
@@ -15,6 +15,11 @@ class SkillAdmin(admin.ModelAdmin):
     search_fields = ('name',)
     ordering = ('name',)
 
+@admin.register(SkillAlias)
+class SkillAliasAdmin(admin.ModelAdmin):
+    list_display = ('id', 'name', 'skill')
+    list_filter = ('skill',)
+    search_fields = ('name', 'skill__name')
 
 @admin.register(Project)
 class ProjectAdmin(admin.ModelAdmin):

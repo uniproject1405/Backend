@@ -1,7 +1,17 @@
 from django.db import models
 from django.shortcuts import get_object_or_404
+
 from rest_framework import generics, serializers, status
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
+
+from .models import Project, Skill, ProjectMember
+from .serializers import (
+    ProjectSerializer,
+    MyProjectsSerializer,
+    SkillSerializer,
+)
+
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
@@ -30,7 +40,7 @@ class ProjectDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
     permission_classes = [IsCreatorOrReadOnly]
-
+    lookup_field = 'public_id'
 
 class MyProjectsView(generics.ListAPIView):
     serializer_class = MyProjectsSerializer
@@ -63,9 +73,14 @@ class ExploreProjectsView(generics.ListAPIView):
 
         queryset = queryset.filter(status=status)
 
-        skill_id = self.request.query_params.get('skill')
-        if skill_id:
-            queryset = queryset.filter(skills__id=skill_id).distinct()
+        skill_name = self.request.query_params.get('skill')
+
+        if skill_name:
+            skill_name = skill_name.strip()
+
+            queryset = queryset.filter(
+                skills__name__iexact=skill_name
+            ).distinct()
 
         return queryset
 
@@ -75,8 +90,11 @@ class ProjectMembersListView(generics.ListAPIView):
     permission_classes = [IsAuthenticatedOrReadOnly]
 
     def get_queryset(self):
-        project_id = self.kwargs.get('pk')
-        return ProjectMember.objects.filter(project_id=project_id).select_related('user')
+        public_id = self.kwargs.get('public_id')
+
+        return ProjectMember.objects.filter(
+            project__public_id=public_id
+        ).select_related('user')
 
 
 class ProjectMemberDetailView(generics.DestroyAPIView):
@@ -86,20 +104,29 @@ class ProjectMemberDetailView(generics.DestroyAPIView):
     """
     permission_classes = [IsAuthenticated]
 
-    def delete(self, request, pk, user_id):
-        project = get_object_or_404(Project, pk=pk)
-        member = get_object_or_404(ProjectMember, project=project, user_id=user_id)
+    def delete(self, request, public_id, user_id):
+        project = get_object_or_404(Project, public_id=public_id)
+
+        member = get_object_or_404(
+            ProjectMember,
+            project=project,
+            user_id=user_id
+        )
 
         is_creator = project.creator_id == request.user.id
         is_self = member.user_id == request.user.id
 
         if not is_creator and not is_self:
-            raise PermissionDenied("You are not authorized to remove this member.")
+            raise PermissionDenied(
+                "You are not authorized to remove this member."
+            )
 
         member.delete()
 
-        # Automatically reopen project if it was closed due to capacity
-        if project.status == Project.STATUS_CLOSED and project.members.count() < project.capacity:
+        if (
+            project.status == Project.STATUS_CLOSED
+            and project.members.count() < project.capacity
+        ):
             project.status = Project.STATUS_OPEN
             project.save(update_fields=['status', 'updated_at'])
 
