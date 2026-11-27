@@ -8,6 +8,12 @@ from .models import Profile, ProfileSkill
 
 User = get_user_model()
 
+class SkillNamesField(serializers.ListField):
+    def to_representation(self, data):
+        if hasattr(data, 'all'):
+            data = data.all()
+
+        return [skill.name for skill in data]
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -25,11 +31,11 @@ class UserRegistrationSerializer(serializers.Serializer):
         min_length=8,
     )
     username = serializers.CharField(
-        required=False,
-        allow_blank=True,
+        required=True,
+        allow_blank=False,
+        trim_whitespace=True,
         max_length=150
     )
-
     def validate_email(self, value):
         normalized_email = value.strip().lower()
 
@@ -56,7 +62,7 @@ class UserRegistrationSerializer(serializers.Serializer):
     def create(self, validated_data):
         email = validated_data['email']
         password = validated_data['password']
-        username = validated_data.get('username') or email
+        username = validated_data['username']
 
         user = User.objects.create_user(
             username=username,
@@ -92,24 +98,31 @@ class ProfileSerializer(serializers.ModelSerializer):
     username = serializers.CharField(
         source='user.username',
         required=False,
+        allow_blank=False,
+        trim_whitespace=True,
         max_length=150,
         validators=User._meta.get_field('username').validators
     )
-    skills = serializers.SlugRelatedField(
-        many=True,
-        slug_field='name',
-        queryset=ProfileSkill.objects.all(),
-        required=False,
-        allow_empty=True
+    name = serializers.CharField(
+        required=True,
+        allow_blank=False,
+        trim_whitespace=True,
+        max_length=100
     )
 
-    other_skills = serializers.ListField(
+    job_title = serializers.CharField(
+        required=True,
+        allow_blank=False,
+        trim_whitespace=True,
+        max_length=150
+    )
+    skills = SkillNamesField(
         child=serializers.CharField(
             max_length=100,
             trim_whitespace=True
         ),
         required=False,
-        write_only=True
+        allow_empty=False
     )
 
     def validate_username(self, value):
@@ -191,38 +204,31 @@ class ProfileSerializer(serializers.ModelSerializer):
 
         return result
 
-    
     def validate(self, attrs):
-        selected_skills = attrs.get("skills")
+        skills = attrs.get('skills')
 
-        if selected_skills is None:
+        if skills is None:
             if self.instance:
-                selected_skills = list(self.instance.skills.all())
+                skills = list(
+                    self.instance.skills.values_list('name', flat=True)
+                )
             else:
-                selected_skills = []
+                skills = []
 
-        other_skills = attrs.get("other_skills", [])
-
-        all_names = (
-            [skill.name for skill in selected_skills]
-            + other_skills
-        )
-
-        # A new profile must have at least one skill.
-        if not self.instance and not all_names:
+        if not skills:
             raise serializers.ValidationError({
                 "skills": "At least one skill is required."
             })
 
-        if len(all_names) > 20:
+        if len(skills) > 20:
             raise serializers.ValidationError({
-                "skills": "You can have up to 20 skills in total."
+                "skills": "You can have up to 20 skills."
             })
 
         seen = set()
 
-        for name in all_names:
-            normalized = name.strip().casefold()
+        for name in skills:
+            normalized = name.casefold()
 
             if not re.fullmatch(
                 r"[A-Za-z0-9][A-Za-z0-9 .+#/&()_-]*",
@@ -239,44 +245,52 @@ class ProfileSerializer(serializers.ModelSerializer):
 
             seen.add(normalized)
 
-        if self.instance:
-            name = attrs.get("name", self.instance.name)
+        name = attrs.get(
+            'name',
+            self.instance.name if self.instance else None
+        )
 
-            if not name or not name.strip():
-                raise serializers.ValidationError({
-                    "name": "This field cannot be empty."
-                })
+        job_title = attrs.get(
+            'job_title',
+            self.instance.job_title if self.instance else None
+        )
 
-            if not all_names:
-                raise serializers.ValidationError({
-                    "skills": "At least one skill is required."
-                })
+        if not name or not name.strip():
+            raise serializers.ValidationError({
+                "name": "Name is required."
+            })
+
+        if not job_title or not job_title.strip():
+            raise serializers.ValidationError({
+                "job_title": "Job title is required."
+            })
 
         return attrs
-
 
     def get_or_create_profile_skills(self, skill_names):
         result = []
 
         for name in skill_names:
-            try:
-                with transaction.atomic():
-                    skill, created = ProfileSkill.objects.get_or_create(
-                        name=name
-                    )
-            except IntegrityError:
-                skill = ProfileSkill.objects.get(name__iexact=name)
+            skill = ProfileSkill.objects.filter(
+                name__iexact=name
+            ).first()
+
+            if skill is None:
+                try:
+                    with transaction.atomic():
+                        skill = ProfileSkill.objects.create(name=name)
+                except IntegrityError:
+                    skill = ProfileSkill.objects.get(name__iexact=name)
 
             result.append(skill)
 
         return result
     
     def create(self, validated_data):
-        selected_skills = validated_data.pop('skills', [])
-        other_skills = validated_data.pop('other_skills', [])
-
         user_data = validated_data.pop('user', {})
         username = user_data.get('username')
+
+        skill_names = validated_data.pop('skills', [])
 
         with transaction.atomic():
             user = self.context['request'].user
@@ -290,38 +304,27 @@ class ProfileSerializer(serializers.ModelSerializer):
                 'user': user
             })
 
-            new_skills = self.get_or_create_profile_skills(
-                other_skills
-            )
-
-            profile.skills.set(selected_skills + new_skills)
+            skills = self.get_or_create_profile_skills(skill_names)
+            profile.skills.set(skills)
 
         return profile
 
     def update(self, instance, validated_data):
-        selected_skills = validated_data.pop('skills', None)
-        other_skills = validated_data.pop('other_skills', [])
+        skill_names = validated_data.pop('skills', None)
 
         user_data = validated_data.pop('user', {})
         username = user_data.get('username')
 
         with transaction.atomic():
-
             if username is not None:
                 instance.user.username = username
                 instance.user.save(update_fields=['username'])
 
             profile = super().update(instance, validated_data)
 
-            if selected_skills is not None or other_skills:
-                if selected_skills is None:
-                    selected_skills = list(profile.skills.all())
-
-                new_skills = self.get_or_create_profile_skills(
-                    other_skills
-                )
-
-                profile.skills.set(selected_skills + new_skills)
+            if skill_names is not None:
+                skills = self.get_or_create_profile_skills(skill_names)
+                profile.skills.set(skills)
 
         return profile
 
@@ -334,7 +337,6 @@ class ProfileSerializer(serializers.ModelSerializer):
             'bio',
             'job_title',
             'skills',
-            'other_skills',
             'avatar',
             'contact_links',
             'open_to_collaboration',

@@ -50,7 +50,7 @@ class ExploreProjectsView(generics.ListAPIView):
 
     filter_backends = [SearchFilter, OrderingFilter]
 
-    search_fields = ['title', 'description']
+    search_fields = ['title', 'description', 'skills__name']
 
     ordering_fields = ['created_at']
     ordering = ['-created_at']
@@ -75,11 +75,11 @@ class ExploreProjectsView(generics.ListAPIView):
 
         queryset = queryset.filter(status=status)
 
-        skill_id = self.request.query_params.get('skill')
+        skill_name = self.request.query_params.get('skill')
 
-        if skill_id:
+        if skill_name:
             queryset = queryset.filter(
-                skills__id=skill_id
+                skills__name__iexact=skill_name.strip()
             ).distinct()
 
         return queryset

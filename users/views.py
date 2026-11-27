@@ -139,7 +139,7 @@ class ProfileCreateView(APIView):
         serializer = ProfileSerializer(data=request.data)
 
         if serializer.is_valid():
-            profile = serializer.save(user=request.user)
+            profile = serializer.save()
 
             return Response({
                 "email": request.user.email,
