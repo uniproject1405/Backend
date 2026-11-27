@@ -93,6 +93,21 @@ class UserLoginSerializer(serializers.Serializer):
         attrs['user'] = user
         return attrs
 
+
+class GoogleAuthSerializer(serializers.Serializer):
+    id_token = serializers.CharField(required=False, allow_blank=False)
+    access_token = serializers.CharField(required=False, allow_blank=False)
+    code = serializers.CharField(required=False, allow_blank=False)
+    redirect_uri = serializers.CharField(required=False, allow_blank=False)
+
+    def validate(self, attrs):
+        if not any([attrs.get('id_token'), attrs.get('access_token'), attrs.get('code')]):
+            raise serializers.ValidationError(
+                "Either id_token, access_token, or code must be provided."
+            )
+        return attrs
+
+
 class ProfileSerializer(serializers.ModelSerializer):
     public_id = serializers.UUIDField(read_only=True)
     username = serializers.CharField(
