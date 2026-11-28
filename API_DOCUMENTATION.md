@@ -1,24 +1,29 @@
-# Backend API Documentation
+# Tribe Backend API Documentation
 
 ## 1. General Information
 
 **Base URL (Local Development):**
 
-`http://127.0.0.1:8000`
+```text
+http://127.0.0.1:8000
+```
 
 **API Prefix:**
 
-`/api/`
+```text
+/api/
+```
 
 **Content-Type:**
 
-`application/json`
+- `application/json` for standard requests and responses.
+- `multipart/form-data` for profile image uploads.
 
-## 2. Authentication
+**Authentication:**
 
 The API uses Token Authentication.
 
-For authenticated requests, include the following header:
+For authenticated requests, include:
 
 ```http
 Authorization: Token YOUR_AUTH_TOKEN
@@ -26,15 +31,19 @@ Authorization: Token YOUR_AUTH_TOKEN
 
 Replace `YOUR_AUTH_TOKEN` with the token returned by the Register or Login endpoint.
 
-Do not use `Bearer`; the required format is `Token`.
+Do not use `Bearer`. The required format is `Token`.
 
 ---
 
-# 3. User APIs
+## 2. Authentication
 
-## 3.1 Register
+### 2.1 Register
 
-**Endpoint:** `POST /api/users/register/`
+**Endpoint:**
+
+```http
+POST /api/users/register/
+```
 
 **Authentication:** Not required.
 
@@ -43,33 +52,43 @@ Do not use `Bearer`; the required format is `Token`.
 ```json
 {
   "email": "user@example.com",
-  "password": "password123",
-  "username": "testuser"
+  "username": "john_doe",
+  "password": "Password123"
 }
 ```
 
-Fields:
+**Validation:**
 
-- `email`: Required. Must be unique.
-- `password`: Required. Minimum 8 characters.
-- `username`: Optional. If omitted, the email is used as the username.
+- Email is required and must be valid.
+- Email uniqueness is case-insensitive.
+- Username is required.
+- Username must not be blank.
+- Leading `@` characters are removed.
+- Username uniqueness is case-insensitive.
+- Password must contain at least 8 characters.
 
-**Success Response:** `201 Created`
+**Success Response (201 Created):**
 
 ```json
 {
   "token": "YOUR_AUTH_TOKEN",
   "user": {
-    "id": 1,
+    "profile_public_id": null,
     "email": "user@example.com",
-    "username": "testuser"
+    "username": "john_doe"
   }
 }
 ```
 
-## 3.2 Login
+Registration creates the user and authentication token. It does not automatically create a profile.
 
-**Endpoint:** `POST /api/users/login/`
+### 2.2 Login
+
+**Endpoint:**
+
+```http
+POST /api/users/login/
+```
 
 **Authentication:** Not required.
 
@@ -78,48 +97,38 @@ Fields:
 ```json
 {
   "email": "user@example.com",
-  "password": "password123"
+  "password": "Password123"
 }
 ```
 
-**Success Response:** `200 OK`
+Login currently supports email and password authentication. Username login is not supported by this endpoint.
+
+**Success Response (200 OK):**
 
 ```json
 {
   "token": "YOUR_AUTH_TOKEN",
   "user": {
-    "id": 1,
+    "profile_public_id": null,
     "email": "user@example.com",
-    "username": "testuser"
+    "username": "john_doe"
   }
 }
 ```
 
-Invalid credentials return a validation error.
+Invalid credentials return HTTP 400 with a generic error message.
 
-## 3.3 Get Current User
+### 2.3 Logout
 
-**Endpoint:** `GET /api/users/me/`
+**Endpoint:**
 
-**Authentication:** Required.
-
-**Success Response:** `200 OK`
-
-```json
-{
-  "id": 1,
-  "email": "user@example.com",
-  "username": "testuser"
-}
+```http
+POST /api/users/logout/
 ```
 
-## 3.4 Logout
-
-**Endpoint:** `POST /api/users/logout/`
-
 **Authentication:** Required.
 
-**Success Response:** `200 OK`
+**Success Response (200 OK):**
 
 ```json
 {
@@ -127,96 +136,827 @@ Invalid credentials return a validation error.
 }
 ```
 
-The current authentication token is deleted after logout.
+The current authentication token is deleted.
 
-## 3.5 Google Authentication (Login & Signup)
+### 2.4 Google Authentication
 
-### 3.5.1 Google OAuth Verify & Exchange
+**Endpoint:**
 
-**Endpoint:** `POST /api/users/google/`
+```http
+POST /api/users/google/
+```
 
 **Authentication:** Not required.
 
-Seamlessly authenticates existing users or provisions new accounts via Google. Accepts a Google ID token, OAuth2 access token, or authorization code.
+The request must provide one of the following:
 
-**Request Body (ID Token - Recommended for SPA):**
+- `id_token`
+- `access_token`
+- `code`
 
-```json
-{
-  "id_token": "YOUR_GOOGLE_ID_TOKEN"
-}
-```
+`redirect_uri` is optional.
 
-**Alternative Request Bodies:**
+**Example Request:**
 
 ```json
 {
-  "access_token": "YOUR_GOOGLE_ACCESS_TOKEN"
+  "id_token": "GOOGLE_ID_TOKEN"
 }
 ```
 
-or:
-
-```json
-{
-  "code": "YOUR_GOOGLE_AUTH_CODE",
-  "redirect_uri": "http://localhost:5173/auth/callback"
-}
-```
-
-**Success Response:** `200 OK`
+**Success Response (200 OK):**
 
 ```json
 {
   "token": "YOUR_AUTH_TOKEN",
   "user": {
-    "id": 1,
+    "profile_public_id": null,
     "email": "user@example.com",
-    "username": "user_name"
+    "username": "john_doe"
   },
-  "is_new_user": false
+  "is_new_user": true
 }
 ```
 
-- If the user email does not exist, a new user account is automatically registered (`is_new_user: true`) with an auto-generated unique username and unusable password.
-- If the user already exists, they are authenticated directly (`is_new_user: false`).
+The `is_new_user` field indicates whether the account was newly created.
 
-**Error Response:** `400 Bad Request`
+### 2.5 Google Login Redirect
+
+**Endpoint:**
+
+```http
+GET /api/users/google/login/
+```
+
+**Authentication:** Not required.
+
+Redirects the user to Google's authentication page.
+
+To receive the authorization URL as JSON, use:
+
+```http
+GET /api/users/google/login/?format=json
+```
+
+**JSON Response (200 OK):**
 
 ```json
 {
-  "detail": "Invalid or expired Google ID token."
+  "auth_url": "GOOGLE_AUTHORIZATION_URL"
 }
 ```
 
-### 3.5.2 Google Login Redirect
+An optional `state` query parameter is supported.
 
-**Endpoint:** `GET /api/users/google/login/`
+### 2.6 Google Callback
 
-**Authentication:** Not required.
+**Endpoint:**
 
-Generates the Google OAuth 2.0 consent page URL.
-
-- Calling from a browser redirects (302) to Google's sign-in screen.
-- Calling with query `?format=json` returns `{"auth_url": "https://accounts.google.com/..."}`.
-
-### 3.5.3 Google OAuth Callback
-
-**Endpoint:** `GET /api/users/google/callback/`
+```http
+GET /api/users/google/callback/
+```
 
 **Authentication:** Not required.
 
-Handles the redirect from Google with `?code=...` and forwards the user to the frontend with an authentication token:
+Processes Google's callback and redirects the user to the frontend login page.
 
-`http://localhost:5173/login?token=YOUR_AUTH_TOKEN&email=user@example.com&username=user_name`
+The redirect may include:
 
-## 3.6 Password Reset Request
+- `token`
+- `email`
+- `username`
 
-**Endpoint:** `POST /api/users/password-reset/`
+If authentication fails, an `error` parameter is returned.
+
+---
+
+## 3. User and Profile APIs
+
+### 3.1 Get Current User
+
+**Endpoint:**
+
+```http
+GET /api/users/me/
+```
+
+**Authentication:** Required.
+
+Returns the authenticated user's account and profile information.
+
+If the user has not created a profile yet, the response includes `profile: null`.
+
+**Example Response:**
+
+```json
+{
+  "profile_public_id": null,
+  "email": "user@example.com",
+  "username": "john_doe",
+  "profile": null,
+  "message": "Please complete your profile."
+}
+```
+
+### 3.2 Update Current Profile
+
+**Endpoint:**
+
+```http
+PATCH /api/users/me/
+```
+
+**Authentication:** Required.
+
+Updates an existing profile.
+
+If the user does not have a profile, the endpoint returns HTTP 404:
+
+```json
+{
+  "message": "Please create your profile first."
+}
+```
+
+### 3.3 Create Profile
+
+**Endpoint:**
+
+```http
+POST /api/users/me/profile/
+```
+
+**Authentication:** Required.
+
+Creates a profile for the authenticated user.
+
+**Example Request:**
+
+```json
+{
+  "username": "john_doe",
+  "name": "John Doe",
+  "job_title": "Software Developer",
+  "bio": "Interested in building useful products.",
+  "skills": [
+    "Python",
+    "Django",
+    "React"
+  ],
+  "contact_links": {
+    "linkedin": "https://www.linkedin.com/in/john-doe/",
+    "github": "https://github.com/john-doe"
+  },
+  "open_to_collaboration": true,
+  "open_to_mentoring": false
+}
+```
+
+**Required fields:**
+
+- `name`
+- `job_title`
+- At least one skill
+
+**Optional fields:**
+
+- `bio`
+- `avatar`
+- `contact_links`
+- `open_to_collaboration`
+- `open_to_mentoring`
+
+Skills must be English names and are limited to 20 entries.
+
+Contact links support only:
+
+- `email`
+- `linkedin`
+- `github`
+
+Email and contact links are optional.
+
+**Success Response (201 Created):**
+
+```json
+{
+  "email": "user@example.com",
+  "username": "john_doe",
+  "profile": {
+    "public_id": "PROFILE_UUID",
+    "username": "john_doe",
+    "name": "John Doe",
+    "bio": "Interested in building useful products.",
+    "job_title": "Software Developer",
+    "skills": [
+      "Python",
+      "Django",
+      "React"
+    ],
+    "avatar": null,
+    "contact_links": {
+      "linkedin": "https://www.linkedin.com/in/john-doe/",
+      "github": "https://github.com/john-doe"
+    },
+    "open_to_collaboration": true,
+    "open_to_mentoring": false
+  },
+  "message": "Profile created successfully."
+}
+```
+
+If a profile already exists, the endpoint returns HTTP 409.
+
+### 3.4 Get or Update My Profile
+
+**Endpoint:**
+
+```http
+GET /api/users/profile/
+PATCH /api/users/profile/
+PUT /api/users/profile/
+```
+
+**Authentication:** Required.
+
+Returns or updates the authenticated user's profile.
+
+Returns HTTP 404 if the user has not created a profile.
+
+### 3.5 Profile Completion
+
+**Endpoint:**
+
+```http
+GET /api/users/profile/completion/
+```
+
+**Authentication:** Required.
+
+Returns profile completion information.
+
+**Response Structure:**
+
+```json
+{
+  "completion_percentage": 100,
+  "is_complete": true,
+  "missing_fields": [],
+  "breakdown": {
+    "name": true,
+    "job_title": true,
+    "skills": true
+  }
+}
+```
+
+For Google users, username customization is also included in the completion breakdown.
+
+### 3.6 Explore Partners
+
+**Endpoint:**
+
+```http
+GET /api/users/explore/
+```
 
 **Authentication:** Not required.
 
-Initiates a password reset request by sending a secure one-time reset link to the user's email address. To prevent account enumeration, this endpoint always returns `200 OK` regardless of whether the email address exists in the system.
+Returns public partner profiles.
+
+**Supported Query Parameters:**
+
+| Parameter | Description |
+|---|---|
+| `search` | Search by name, job title, bio, username, or skill |
+| `skill` | Filter by a skill name |
+| `collaboration` | Filter by collaboration availability |
+| `open_to_collaboration` | Alternative collaboration filter |
+| `mentoring` | Filter by mentoring availability |
+| `open_to_mentoring` | Alternative mentoring filter |
+| `ordering` | Order by `created_at`, `name`, or `updated_at` |
+
+Use `true`, `1`, or `yes` for a true availability filter. Other non-empty values are interpreted as false.
+
+Prefixing the search value with `@` enables username-oriented searching.
+
+**Example:**
+
+```http
+GET /api/users/explore/?skill=Python&collaboration=true
+```
+
+Public partner profiles contain:
+
+- `public_id`
+- `username`
+- `name`
+- `bio`
+- `job_title`
+- `skills`
+- `avatar`
+- `open_to_collaboration`
+- `open_to_mentoring`
+
+Contact links are not included in this public serializer.
+
+### 3.7 Discover Partners
+
+**Endpoint:**
+
+```http
+GET /api/users/discover/
+```
+
+**Authentication:** Not required.
+
+This route is registered to `PartnerExploreView` and provides the same partner exploration behavior as `/api/users/explore/`.
+
+### 3.8 Get Public User Details
+
+**Endpoint:**
+
+```http
+GET /api/users/{public_id}/
+```
+
+**Authentication:** Not required.
+
+Returns a public profile using the profile UUID.
+
+### 3.9 Get Public Profile
+
+**Endpoint:**
+
+```http
+GET /api/users/{public_id}/profile/
+```
+
+**Authentication:** Not required.
+
+Returns the public profile associated with the specified profile UUID.
+
+---
+
+## 4. Project APIs
+
+Project endpoints use UUID public identifiers rather than internal database IDs.
+
+### 4.1 List Projects / Create Project
+
+**Endpoint:**
+
+```http
+GET /api/projects/
+POST /api/projects/
+```
+
+**Authentication:**
+
+- GET: Public read access.
+- POST: Authentication and complete profile required.
+
+**Example Create Request:**
+
+```json
+{
+  "title": "AI Learning Platform",
+  "goal": "Build an AI-powered learning platform.",
+  "description": "A collaborative project for developers.",
+  "capacity": 5,
+  "project_type": "startup",
+  "custom_project_type": "",
+  "skills": [
+    "Python",
+    "Django",
+    "Machine Learning"
+  ]
+}
+```
+
+**Project Types:**
+
+- `startup`
+- `learning`
+- `research`
+- `personal`
+- `other`
+
+When `project_type` is `other`, `custom_project_type` is required.
+
+**Skill Validation:**
+
+- At least 1 skill is required.
+- Maximum 15 skills.
+- Skills must use English names.
+- Duplicate skills are rejected case-insensitively.
+
+The project capacity does not include the creator.
+
+### 4.2 List My Projects
+
+**Endpoint:**
+
+```http
+GET /api/projects/my/
+```
+
+**Authentication:** Required.
+
+Returns projects created by the authenticated user or projects in which the user is a member.
+
+The response includes the user's `role`:
+
+- `creator`
+- `member`
+
+### 4.3 Explore Projects
+
+**Endpoint:**
+
+```http
+GET /api/projects/explore/
+```
+
+**Authentication:** Public read access.
+
+**Supported Query Parameters:**
+
+| Parameter | Description |
+|---|---|
+| `search` | Search title, description, or skill name |
+| `status` | Filter by `open` or `closed` |
+| `skill` | Filter by exact skill name |
+| `ordering` | Order by `created_at` or `-created_at` |
+
+The default status filter is `open`.
+
+The default ordering is:
+
+```text
+-created_at
+```
+
+**Example:**
+
+```http
+GET /api/projects/explore/?status=open&skill=Python&ordering=-created_at
+```
+
+### 4.4 Project Details
+
+**Endpoint:**
+
+```http
+GET /api/projects/{public_id}/
+PUT /api/projects/{public_id}/
+PATCH /api/projects/{public_id}/
+DELETE /api/projects/{public_id}/
+```
+
+**Authentication:** Read access is available publicly. Write permissions are controlled by project permissions.
+
+Returns, updates, or deletes a project identified by its UUID.
+
+### 4.5 Project Members
+
+**Endpoint:**
+
+```http
+GET /api/projects/{public_id}/members/
+```
+
+**Authentication:** Public read access.
+
+Returns the members of a project.
+
+Each member includes:
+
+- `user`
+  - `public_id`
+  - `username`
+  - `name`
+- `joined_at`
+
+### 4.6 Remove Project Member
+
+**Endpoint:**
+
+```http
+DELETE /api/projects/{public_id}/members/{member_public_id}/
+```
+
+**Authentication:** Required.
+
+The project creator can remove a member. A member can also remove themselves.
+
+If a project was closed because it reached capacity, removing a member can reopen it when its member count falls below capacity.
+
+---
+
+## 5. Membership Request APIs
+
+Membership request endpoints are under:
+
+```text
+/api/applications/
+```
+
+### 5.1 Create Membership Request
+
+**Endpoint:**
+
+```http
+POST /api/applications/requests/
+```
+
+**Authentication:** Required. A complete profile is also required.
+
+**Example Request:**
+
+```json
+{
+  "project": "PROJECT_UUID",
+  "message": "I am interested in joining this project."
+}
+```
+
+The `project` field uses the project's public UUID.
+
+**Validation Rules:**
+
+- The project must be open.
+- Users cannot apply to their own projects.
+- Existing project members cannot apply.
+- Duplicate pending requests are not allowed.
+- Project capacity must not be full.
+- The applicant must have a complete profile.
+
+### 5.2 List Incoming Requests
+
+**Endpoint:**
+
+```http
+GET /api/applications/requests/incoming/
+```
+
+**Authentication:** Required.
+
+Returns membership requests received for projects created by the authenticated user.
+
+**Supported Query Parameters:**
+
+| Parameter | Description |
+|---|---|
+| `project` | Filter by project UUID |
+| `status` | Filter by request status |
+| `search` | Search project title, username, email, or message |
+| `ordering` | Order results |
+
+Default ordering:
+
+```text
+-created_at
+```
+
+Pagination is enabled.
+
+### 5.3 Update Membership Request Status
+
+**Endpoint:**
+
+```http
+PATCH /api/applications/requests/{public_id}/
+```
+
+**Authentication:** Required.
+
+Only the creator of the related project can accept or reject a request.
+
+**Example Accept Request:**
+
+```json
+{
+  "status": "accepted",
+  "response_message": "Welcome to the project!"
+}
+```
+
+**Example Reject Request:**
+
+```json
+{
+  "status": "rejected",
+  "response_message": "Thank you for your interest."
+}
+```
+
+Allowed statuses:
+
+- `accepted`
+- `rejected`
+
+Only pending requests can be updated.
+
+When a request is accepted:
+
+- A project membership is created.
+- If project capacity is reached, the project status changes to `closed`.
+
+### 5.4 Cancel Membership Request
+
+**Endpoint:**
+
+```http
+DELETE /api/applications/requests/{public_id}/cancel/
+```
+
+**Authentication:** Required.
+
+Users can cancel their own pending membership requests.
+
+Only pending requests can be cancelled.
+
+### 5.5 Membership Statistics
+
+**Endpoint:**
+
+```http
+GET /api/applications/requests/stats/
+```
+
+**Authentication:** Required.
+
+Returns sent and received membership request statistics.
+
+**Response Structure:**
+
+```json
+{
+  "sent": {
+    "total": 0,
+    "pending": 0,
+    "accepted": 0,
+    "rejected": 0
+  },
+  "received": {
+    "total": 0,
+    "pending": 0,
+    "accepted": 0,
+    "rejected": 0
+  },
+  "projects_to_review": [
+    {
+      "project_public_id": "PROJECT_UUID",
+      "project_title": "AI Learning Platform",
+      "pending_count": 2
+    }
+  ]
+}
+```
+
+---
+
+## 6. Chat APIs
+
+Chat endpoints are under:
+
+```text
+/api/chat/
+```
+
+**Authentication:** Required for all Chat endpoints.
+
+Note: Chat currently uses integer database IDs for conversations and recipient/project identifiers, unlike the UUID-based public identifiers used by Projects and Profiles.
+
+### 6.1 List Conversations
+
+**Endpoint:**
+
+```http
+GET /api/chat/conversations/
+```
+
+Returns conversations in which the authenticated user is a participant.
+
+Conversations are ordered by most recently updated first.
+
+### 6.2 Create or Retrieve a Conversation
+
+**Endpoint:**
+
+```http
+POST /api/chat/conversations/
+```
+
+**Request fields:**
+
+- `recipient_id`: Recipient's internal user ID.
+- `project_id`: Optional internal project ID.
+
+The endpoint checks whether a conversation already exists between the two users, optionally for the specified project.
+
+- If an existing conversation is found, it returns that conversation with HTTP 200.
+- If a new conversation is created, it returns HTTP 201.
+
+### 6.3 Conversation Details
+
+**Endpoint:**
+
+```http
+GET /api/chat/conversations/{pk}/
+```
+
+Returns conversation metadata.
+
+Only participants can access the conversation.
+
+### 6.4 List Messages
+
+**Endpoint:**
+
+```http
+GET /api/chat/conversations/{conversation_id}/messages/
+```
+
+Returns messages in chronological order.
+
+Only conversation participants can access the messages.
+
+Incoming unread messages are automatically marked as read when this endpoint is called.
+
+### 6.5 Send Message
+
+**Endpoint:**
+
+```http
+POST /api/chat/conversations/{conversation_id}/messages/
+```
+
+**Example Request:**
+
+```json
+{
+  "content": "Hello! I would like to discuss the project."
+}
+```
+
+The authenticated user is automatically assigned as the sender.
+
+**Success Response:** HTTP 201 Created.
+
+### 6.6 Mark Messages as Read
+
+**Endpoint:**
+
+```http
+POST /api/chat/conversations/{conversation_id}/read/
+```
+
+Marks all unread incoming messages in the conversation as read.
+
+**Example Response:**
+
+```json
+{
+  "status": "success",
+  "marked_read": 3
+}
+```
+
+`marked_read` represents the number of messages updated by the request.
+
+### 6.7 Total Unread Message Count
+
+**Endpoint:**
+
+```http
+GET /api/chat/unread-count/
+```
+
+Returns the total number of unread incoming messages across the authenticated user's conversations.
+
+**Example Response:**
+
+```json
+{
+  "unread_count": 5
+}
+```
+
+---
+
+## 7. Password Management
+
+### 7.1 Request Password Reset
+
+**Endpoint:**
+
+```http
+POST /api/users/password-reset/
+```
+
+**Authentication:** Not required.
 
 **Request Body:**
 
@@ -227,142 +967,86 @@ Initiates a password reset request by sending a secure one-time reset link to th
 }
 ```
 
-- `email` (Required): The email of the account to reset.
-- `redirect_url` (Optional): Custom frontend URL where the user will be directed. If omitted, defaults to `${FRONTEND_URL}/reset-password`.
+`redirect_url` is optional.
 
-**Success Response:** `200 OK`
+The endpoint returns a generic success response regardless of whether the email belongs to an existing account. This prevents account enumeration.
+
+### 7.2 Validate Password Reset Token
+
+**Endpoint:**
+
+```http
+GET /api/users/password-reset/validate/?uid=UID&token=TOKEN
+```
+
+Alternatively, POST with:
 
 ```json
 {
-  "message": "If an account with this email exists, a password reset link has been sent.",
-  "status": "success"
+  "uid": "UID",
+  "token": "TOKEN"
 }
 ```
-
-**Email Sent to User:**
-Contains a reset link formatted as:
-`http://localhost:5173/reset-password?uid={uidb64}&token={token}`
-Link is valid for 24 hours.
-
-**Error Response:** `400 Bad Request` (e.g. invalid email format)
-
-```json
-{
-  "email": ["Enter a valid email address."]
-}
-```
-
----
-
-## 3.7 Password Reset Token Validation
-
-**Endpoint:** `POST /api/users/password-reset/validate/` or `GET /api/users/password-reset/validate/?uid={uid}&token={token}`
 
 **Authentication:** Not required.
 
-Allows the frontend application to verify the validity and expiration of the reset token before displaying the new password input form to the user.
-
-**Request Body (POST):**
-
-```json
-{
-  "uid": "MQ",
-  "token": "d7s12a-438902d8f92134e7f8"
-}
-```
-
-**Success Response:** `200 OK`
+**Success Response:**
 
 ```json
 {
   "valid": true,
-  "uid": "MQ",
-  "username": "testuser",
+  "uid": "UID",
+  "username": "john_doe",
   "message": "Token is valid."
 }
 ```
 
-**Error Response:** `400 Bad Request`
+Invalid or expired tokens return HTTP 400.
 
-```json
-{
-  "valid": false,
-  "message": "The password reset link is invalid or has expired."
-}
+### 7.3 Confirm Password Reset
+
+**Endpoint:**
+
+```http
+POST /api/users/password-reset/confirm/
 ```
-
----
-
-## 3.8 Password Reset Confirm
-
-**Endpoint:** `POST /api/users/password-reset/confirm/`
-
-**Authentication:** Not required.
-
-Applies the new password to the account using the verified token and UID. Upon success, any previous authentication tokens for the user are invalidated and a fresh token is issued.
 
 **Request Body:**
 
 ```json
 {
-  "uid": "MQ",
-  "token": "d7s12a-438902d8f92134e7f8",
-  "new_password": "NewSecurePassword123",
-  "confirm_password": "NewSecurePassword123"
+  "uid": "UID",
+  "token": "TOKEN",
+  "new_password": "NewPassword123",
+  "confirm_password": "NewPassword123"
 }
 ```
 
-**Success Response:** `200 OK`
+Both password fields must contain at least 8 characters and must match.
 
-```json
-{
-  "message": "Password has been successfully reset. You can now log in with your new password.",
-  "token": "NEW_AUTH_TOKEN_KEY",
-  "status": "success"
-}
+### 7.4 Change Password
+
+**Endpoint:**
+
+```http
+POST /api/users/password-change/
 ```
 
-**Error Responses:**
-- `400 Bad Request` (Token invalid or expired):
-  ```json
-  {
-    "detail": "The password reset link is invalid or has expired."
-  }
-  ```
-- `400 Bad Request` (Passwords do not match):
-  ```json
-  {
-    "confirm_password": ["Passwords do not match."]
-  }
-  ```
-- `400 Bad Request` (Password shorter than 8 characters):
-  ```json
-  {
-    "new_password": ["Ensure this field has at least 8 characters."]
-  }
-  ```
-
----
-
-## 3.9 Password Change (Authenticated)
-
-**Endpoint:** `POST /api/users/password-change/`
-
-**Authentication:** Required (`Token <token>`).
-
-Allows an authenticated user to change their existing password by providing their current password and a new password.
+**Authentication:** Required.
 
 **Request Body:**
 
 ```json
 {
-  "old_password": "CurrentPassword123",
-  "new_password": "UpdatedPassword456",
-  "confirm_password": "UpdatedPassword456"
+  "old_password": "OldPassword123",
+  "new_password": "NewPassword123",
+  "confirm_password": "NewPassword123"
 }
 ```
 
-**Success Response:** `200 OK`
+The old password must be correct, and the new password fields must match.
+
+**Success Response:**
 
 ```json
 {
@@ -371,680 +1055,92 @@ Allows an authenticated user to change their existing password by providing thei
 }
 ```
 
-**Error Responses:**
-- `400 Bad Request` (Wrong current password):
-  ```json
-  {
-    "old_password": ["Current password is incorrect."]
-  }
-  ```
-- `400 Bad Request` (Confirmation mismatch):
-  ```json
-  {
-    "confirm_password": ["Passwords do not match."]
-  }
-  ```
-- `401 Unauthorized`: If the request lacks authentication.
-
 ---
 
-## 3.10 API Health Check
+## 8. Common Validation and Error Responses
 
+The API uses standard HTTP status codes.
 
-**Endpoint:** `GET /api/users/`
+| Status Code | Meaning |
+|---|---|
+| 200 OK | Request completed successfully |
+| 201 Created | Resource successfully created |
+| 204 No Content | Resource successfully deleted |
+| 400 Bad Request | Invalid request data or validation error |
+| 401 Unauthorized | Authentication required or invalid |
+| 403 Forbidden | User does not have permission |
+| 404 Not Found | Resource does not exist |
+| 409 Conflict | Resource already exists or conflicts with current state |
 
-**Authentication:** Not required.
+Validation errors are returned as JSON.
 
-**Success Response:** `200 OK`
-
-```json
-{
-  "message": "API is working!",
-  "status": "success"
-}
-```
-
-Other HTTP methods are not allowed and return `405 Method Not Allowed`.
-
----
-
-# 4. Project APIs
-
-## 4.1 List Projects
-
-**Endpoint:** `GET /api/projects/`
-
-**Authentication:** Not required.
-
-Returns projects whose status is `open`.
-
-**Optional Search Parameter:**
-
-`?search=keyword`
-
-Searches project titles.
-
-**Example:**
-
-```http
-GET /api/projects/?search=python
-```
-
-**Success Response:** `200 OK`
-
-Returns a list of projects using the Project response structure described below.
-
-## 4.2 Create Project
-
-**Endpoint:** `POST /api/projects/`
-
-**Authentication:** Required.
-
-**Request Body:**
+Example:
 
 ```json
 {
-  "title": "Web Development Project",
-  "goal": "Build a platform for students to collaborate on projects.",
-  "description": "A project built with Django and React.",
-  "capacity": 4,
-  "status": "open",
-  "skills": [1, 2]
-}
-```
-
-Fields:
-
-- `title`: Required. The project title.
-- `goal`: Required. The main objective of the project.
-- `description`: Optional. Additional information about the project.
-- `capacity`: Required; minimum value is 1.
-- `status`: Optional; accepted values are `open` and `closed`.
-- `skills`: Optional; a list of existing Skill IDs.
-
-The project creator is assigned automatically from the authenticated user. The client must not set the `creator` field.
-
-**Success Response:** `201 Created`
-
-Returns the created project, including its `goal` field.
-
-## 4.3 Get Project Details
-
-**Endpoint:** `GET /api/projects/{id}/`
-
-**Authentication:** Not required.
-
-Returns the details of the specified project.
-
-**Success Response:** `200 OK`
-
-```json
-{
-  "id": 5,
-  "title": "Web Development Project",
-  "goal": "Build a platform for students to collaborate on projects.",
-  "description": "A project built with Django and React.",
-  "creator": 1,
-  "capacity": 4,
-  "status": "open",
-  "skills"
-}
-```
-
-## 4.4 Explore Projects API
-
-**Endpoint:** `/api/projects/explore/`
-
-**Method:** `GET`
-
-**Description:**
-
-Returns projects for the Explore Projects page. Supports searching, filtering by project status and required skills, and ordering projects by creation date.
-
-**Authentication:** Not required (Public endpoint).
-
-#### Query Parameters
-
-| Parameter | Description | Accepted Values | Default |
-|---|---|---|---|
-| `search` | Search by project title and description | Keyword | None |
-| `status` | Filter projects by status | `open`, `closed` | `open` |
-| `skill` | Filter by required skill ID | Skill ID (integer) | None |
-| `ordering` | Sort projects by creation date | `created_at`, `-created_at` | `-created_at` |
-
-#### Examples
-
-**1. Get all open projects (default):**
-```http
-GET /api/projects/explore/
-```
-
-**2. Get closed projects:**
-```http
-GET /api/projects/explore/?status=closed
-```
-
-**3. Get newest projects:**
-```http
-GET /api/projects/explore/?ordering=-created_at
-```
-
-**4. Get oldest projects:**
-```http
-GET /api/projects/explore/?ordering=created_at
-```
-
-**5. Search projects:**
-```http
-GET /api/projects/explore/?search=Python
-```
-
-**6. Filter projects by skill:**
-```http
-GET /api/projects/explore/?skill=2
-```
-
-**7. Combine multiple filters:**
-```http
-GET /api/projects/explore/?status=open&skill=2&ordering=-created_at&search=Python
-```
-
-#### Validation
-
-- If no `status` parameter is provided, only open projects are returned.
-- The `status` parameter accepts only `open` or `closed`.
-- Invalid status values return `400 Bad Request`.
-- Projects are ordered by newest first by default.
-- Multiple query parameters can be combined in a single request.
-
-#### Response
-
-Returns a list of projects using `ProjectSerializer`.
-
-Each project contains:
-- `id`
-- `title`
-- `goal`
-- `description`
-- `creator`
-- `capacity`
-- `remaining_capacity`
-- `status`
-- `skills`
-- `created_at`
-- `updated_at`
-
----
-
-# 5. Membership Request APIs
-
-## 5.1 Submit Membership Request
-
-**Endpoint:** `POST /api/applications/requests/`
-
-**Authentication:** Required.
-
-Submits a membership request to join a project.
-
-**Request Body:**
-
-```json
-{
-  "project": 1,
-  "message": "Hi, I have strong experience in Python and would love to collaborate."
-}
-```
-
-Fields:
-- `project`: Required. ID of the target project.
-- `message`: Optional. Application note or message to the project creator.
-
-**Success Response:** `201 Created`
-
-```json
-{
-  "id": 1,
-  "project": 1,
-  "message": "Hi, I have strong experience in Python and would love to collaborate.",
-  "status": "pending",
-  "applicant_username": "applicant_user",
-  "created_at": "2026-11-23T10:00:00Z"
-}
-```
-
-**Validation & Error Responses:** `400 Bad Request`
-- Target project must be open (`status == 'open'`).
-- Creators cannot apply to their own projects.
-- Existing project members cannot apply again.
-- Duplicate pending requests are rejected.
-- Projects with full capacity reject new requests.
-
-## 5.2 List Membership Requests
-
-**Endpoint:** `GET /api/applications/requests/`
-
-**Authentication:** Required.
-
-Returns paginated requests relevant to the authenticated user (requests sent by the user as applicant, and requests received for projects owned by the user).
-
-**Query Parameters:**
-- `?project=1`: Filter requests for a specific project ID.
-- `?status=pending`: Filter by status (`pending`, `accepted`, `rejected`).
-- `?role=applicant`: Return only requests sent by the user.
-- `?role=creator`: Return only requests received on user's projects.
-- `?search=keyword`: Search by project title, applicant username, email, or message.
-- `?ordering=-created_at`: Order by `created_at`, `status`, or `project__title`.
-- `?page=1&page_size=10`: Pagination parameters.
-
-**Success Response:** `200 OK`
-
-```json
-{
-  "count": 1,
-  "next": null,
-  "previous": null,
-  "results": [
-    {
-      "id": 1,
-      "project": 1,
-      "project_title": "AI Skill Matcher Platform",
-      "user": 2,
-      "applicant_username": "applicant_user",
-      "applicant_email": "applicant@example.com",
-      "status": "pending",
-      "message": "Hi, I have strong experience in Python...",
-      "response_message": "",
-      "created_at": "2026-11-23T10:00:00Z",
-      "updated_at": "2026-11-23T10:00:00Z"
-    }
+  "email": [
+    "Enter a valid email address."
   ]
 }
 ```
 
-## 5.3 Membership Request Analytics & Stats
+---
 
-**Endpoint:** `GET /api/applications/requests/stats/`
+## 9. Important API Design Notes
 
-**Authentication:** Required.
-
-Returns real-time metrics for the authenticated user, summarizing application statuses both as applicant and as project creator.
-
-**Success Response:** `200 OK`
-
-```json
-{
-  "sent": {
-    "total": 5,
-    "pending": 2,
-    "accepted": 2,
-    "rejected": 1
-  },
-  "received": {
-    "total": 8,
-    "pending": 3,
-    "accepted": 4,
-    "rejected": 1
-  },
-  "projects_to_review": [
-    {
-      "project_id": 1,
-      "project_title": "AI Collaboration Platform",
-      "pending_count": 3
-    }
-  ]
-}
-```
-
-## 5.4 Get Membership Request Details
-
-**Endpoint:** `GET /api/applications/requests/{id}/`
-
-**Authentication:** Required (Applicant or Project Creator).
-
-**Success Response:** `200 OK`
-
-```json
-{
-  "id": 1,
-  "project": 1,
-  "project_title": "AI Skill Matcher Platform",
-  "user": 2,
-  "applicant_username": "applicant_user",
-  "applicant_email": "applicant@example.com",
-  "status": "pending",
-  "message": "Hi, I have strong experience in Python...",
-  "response_message": "Welcome to the team!",
-  "created_at": "2026-11-23T10:00:00Z",
-  "updated_at": "2026-11-23T10:00:00Z"
-}
-```
-
-## 5.5 Accept or Reject Membership Request
-
-**Endpoint:** `PATCH /api/applications/requests/{id}/`
-
-**Authentication:** Required (Project Creator only).
-
-Accepts or rejects a pending membership request, with an optional response message/feedback to the applicant.
-
-**Request Body (Accept):**
-
-```json
-{
-  "status": "accepted",
-  "response_message": "Welcome to our engineering team!"
-}
-```
-
-**Request Body (Reject):**
-
-```json
-{
-  "status": "rejected",
-  "response_message": "Thank you for applying. We are currently looking for a senior contributor."
-}
-```
-
-**Behavior on Accept:**
-- Transactional operation (`transaction.atomic`) with database row locking (`select_for_update`).
-- Automatically adds the applicant to `ProjectMember`.
-- Decrements project remaining capacity.
-- Automatically closes the project (`status = 'closed'`) if capacity reaches full.
-
-**Success Response:** `200 OK`
-
-```json
-{
-  "status": "accepted",
-  "response_message": "Welcome to our engineering team!"
-}
-```
-
-**Validation & Error Responses:**
-- `400 Bad Request`: If status is not `accepted` or `rejected`, or if request is already finalized, or if capacity is full.
-- `403 Forbidden`: If user is not the project creator.
-
-## 5.6 Withdraw Membership Request
-
-**Endpoint:** `DELETE /api/applications/requests/{id}/`
-
-**Authentication:** Required (Applicant only).
-
-Allows an applicant to cancel and delete their own pending request.
-
-**Success Response:** `204 No Content`
-
-**Error Responses:**
-- `400 Bad Request`: If request has already been accepted or rejected.
-- `403 Forbidden`: If requesting user is not the applicant.
-
-## 5.7 Project Members List
-
-**Endpoint:** `GET /api/projects/{id}/members/`
-
-**Authentication:** Optional.
-
-Returns all accepted team members for a given project.
-
-**Success Response:** `200 OK`
-
-```json
-[
-  {
-    "id": 1,
-    "user": {
-      "id": 2,
-      "username": "applicant_user",
-      "email": "applicant@example.com"
-    },
-    "joined_at": "2026-11-23T10:15:00Z"
-  }
-]
-```
-
-## 5.8 Remove Project Member or Leave Team
-
-**Endpoint:** `DELETE /api/projects/{id}/members/{user_id}/`
-
-**Authentication:** Required.
-
-Allows a project creator to remove an accepted member from their team, or allows a member to voluntarily leave the project.
-
-- If the project was previously closed due to full capacity, removing a member automatically re-opens the project (`status = 'open'`).
-
-**Success Response:** `204 No Content`
-
-**Error Responses:**
-- `403 Forbidden`: If the user is neither the project creator nor the member themselves.
-- `404 Not Found`: If the project or member does not exist.
+1. Token authentication uses the `Token` prefix, not `Bearer`.
+2. Registration does not automatically create a profile.
+3. Profile completion requires a name, job title, and at least one skill.
+4. Project creation and membership request submission require a complete profile.
+5. Project skills and profile skills are separate resources.
+6. Project and profile identifiers exposed by their APIs are UUIDs.
+7. Membership requests use public UUID identifiers.
+8. Chat conversation and recipient/project references currently use integer IDs.
+9. Project capacity does not include the project creator.
+10. Public partner responses do not expose contact links.
+11. Password reset requests use a generic response to avoid revealing whether an account exists.
 
 ---
 
-# 6. Partner Explore & User Profile APIs
+## 10. API Endpoint Summary
 
-## 6.1 Partner & Mentor Explore / Discovery
-
-**Endpoint:** `GET /api/users/explore/` (Alias: `GET /api/users/discover/`)
-
-**Authentication:** Optional (`AllowAny`).
-
-Explore active users open for project collaboration and mentoring with rich multi-field filtering and search. Sensitive details (e.g. private emails, password hashes) are securely omitted.
-
-### Query Parameters
-
-| Parameter | Type | Description |
+| Module | Method | Endpoint |
 |---|---|---|
-| `search` | String | Performs text search across full name, headline, bio, username, and skill names. |
-| `skill` | String / Integer | Filters users possessing a specific skill ID or skill name matching the substring. |
-| `collaboration` | Boolean | Pass `true` to filter partners open to collaboration (`open_to_collaboration=true`). |
-| `mentoring` | Boolean | Pass `true` to filter partners open to mentoring (`open_to_mentoring=true`). |
-| `ordering` | String | Sort order: `-created_at`, `name`, `updated_at`. |
+| Users | GET | `/api/users/` |
+| Users | POST | `/api/users/register/` |
+| Users | POST | `/api/users/login/` |
+| Users | GET/PATCH | `/api/users/me/` |
+| Users | POST | `/api/users/me/profile/` |
+| Users | POST | `/api/users/logout/` |
+| Users | POST | `/api/users/google/` |
+| Users | GET | `/api/users/google/login/` |
+| Users | GET | `/api/users/google/callback/` |
+| Users | POST | `/api/users/password-reset/` |
+| Users | GET/POST | `/api/users/password-reset/validate/` |
+| Users | POST | `/api/users/password-reset/confirm/` |
+| Users | POST | `/api/users/password-change/` |
+| Users | GET | `/api/users/explore/` |
+| Users | GET | `/api/users/discover/` |
+| Users | GET | `/api/users/profile/` |
+| Users | GET/PATCH/PUT | `/api/users/profile/` |
+| Users | GET | `/api/users/profile/completion/` |
+| Users | GET | `/api/users/{public_id}/` |
+| Users | GET | `/api/users/{public_id}/profile/` |
+| Projects | GET/POST | `/api/projects/` |
+| Projects | GET | `/api/projects/my/` |
+| Projects | GET | `/api/projects/explore/` |
+| Projects | GET/PUT/PATCH/DELETE | `/api/projects/{public_id}/` |
+| Projects | GET | `/api/projects/{public_id}/members/` |
+| Projects | DELETE | `/api/projects/{public_id}/members/{member_public_id}/` |
+| Applications | POST | `/api/applications/requests/` |
+| Applications | GET | `/api/applications/requests/incoming/` |
+| Applications | GET | `/api/applications/requests/stats/` |
+| Applications | PATCH | `/api/applications/requests/{public_id}/` |
+| Applications | DELETE | `/api/applications/requests/{public_id}/cancel/` |
+| Chat | GET/POST | `/api/chat/conversations/` |
+| Chat | GET | `/api/chat/conversations/{pk}/` |
+| Chat | GET/POST | `/api/chat/conversations/{conversation_id}/messages/` |
+| Chat | POST | `/api/chat/conversations/{conversation_id}/read/` |
+| Chat | GET | `/api/chat/unread-count/` |
 
-### Success Response: `200 OK`
-
-```json
-[
-  {
-    "id": 1,
-    "user_id": 1,
-    "username": "johndoe",
-    "name": "John Doe",
-    "display_name": "John Doe",
-    "headline": "Senior Full-Stack Developer",
-    "bio": "Passionate about open-source and mentoring junior developers.",
-    "avatar_display": "https://example.com/media/avatars/john.jpg",
-    "skills": [
-      {
-        "id": 1,
-        "name": "Python"
-      },
-      {
-        "id": 3,
-        "name": "Django"
-      }
-    ],
-    "skills_to_teach": [
-      {
-        "id": 1,
-        "name": "Python"
-      }
-    ],
-    "contact_links": [
-      {
-        "telegram": "@johndoe"
-      },
-      {
-        "github": "https://github.com/johndoe"
-      }
-    ],
-    "telegram": "@johndoe",
-    "github": "https://github.com/johndoe",
-    "linkedin": "",
-    "open_to_collaboration": true,
-    "open_for_collaboration": true,
-    "open_to_mentoring": true,
-    "open_for_mentoring": true,
-    "created_at": "2026-11-23T10:00:00Z"
-  }
-]
-```
-
----
-
-## 6.2 Public User Profile
-
-**Endpoint:** `GET /api/users/{id}/profile/` (Alias: `GET /api/users/{id}/`)
-
-**Authentication:** Optional (`AllowAny`).
-
-Retrieves the public profile of a user, including headline, bio, skills, and approved contact channels.
-
-### Success Response: `200 OK`
-
-```json
-{
-  "id": 2,
-  "user_id": 2,
-  "username": "sarah_connor",
-  "name": "Sarah Connor",
-  "display_name": "Sarah Connor",
-  "headline": "AI & Machine Learning Specialist",
-  "bio": "Deep learning researcher interested in NLP and computer vision.",
-  "avatar_display": "https://example.com/avatar.jpg",
-  "skills": [
-    {
-      "id": 5,
-      "name": "PyTorch"
-    }
-  ],
-  "contact_links": [
-    {
-      "linkedin": "https://linkedin.com/in/sarah-connor"
-    }
-  ],
-  "open_to_collaboration": true,
-  "open_to_mentoring": false,
-  "created_at": "2026-11-20T14:30:00Z"
-}
-```
-
-### Error Responses
-
-- `404 Not Found`: If the user does not exist or has been deactivated.
-
----
-
-## 6.3 Self Profile Management
-
-**Endpoint:** `GET /api/users/profile/` | `PUT /api/users/profile/` | `PATCH /api/users/profile/`
-
-**Authentication:** Required (`Token <token>`).
-
-Inspect and update the authenticated user's profile settings.
-
-### Request Body (Partial or Full Update)
-
-```json
-{
-  "name": "John Doe",
-  "headline": "Full-Stack Engineer & Mentor",
-  "bio": "Experienced builder with Django & React.",
-  "skills": [1, 2, 4],
-  "skills_names": ["Python", "FastAPI"],
-  "contact_links": [
-    {
-      "telegram": "@johndoe"
-    },
-    {
-      "github": "https://github.com/johndoe"
-    }
-  ],
-  "open_to_collaboration": true,
-  "open_to_mentoring": true
-}
-```
-
-### Success Response: `200 OK`
-
-```json
-{
-  "id": 1,
-  "username": "johndoe",
-  "email": "johndoe@example.com",
-  "name": "John Doe",
-  "display_name": "John Doe",
-  "headline": "Full-Stack Engineer & Mentor",
-  "bio": "Experienced builder with Django & React.",
-  "avatar_display": "https://example.com/media/avatars/john.jpg",
-  "skills": [1, 2, 4],
-  "skills_detail": [
-    {
-      "id": 1,
-      "name": "Python"
-    },
-    {
-      "id": 2,
-      "name": "FastAPI"
-    }
-  ],
-  "contact_links": [
-    {
-      "telegram": "@johndoe"
-    },
-    {
-      "github": "https://github.com/johndoe"
-    }
-  ],
-  "open_to_collaboration": true,
-  "open_to_mentoring": true,
-  "created_at": "2026-11-23T10:00:00Z",
-  "updated_at": "2026-11-23T12:00:00Z"
-}
-```
-
-### Error Responses
-
-- `400 Bad Request`: If contact link URLs or formats fail validation.
-- `401 Unauthorized`: If the request lacks authentication.
-
----
-
-## 6.4 Profile Completion Score
-
-**Endpoint:** `GET /api/users/profile/completion/`
-
-**Authentication:** Required (`Token <token>`).
-
-Calculates the percentage of profile completeness (out of 100%) to guide users and display progress indicators in the frontend.
-
-### Weighted Criteria (20% each)
-1. Full Name (`name`)
-2. Professional Headline (`headline`)
-3. Bio / About (`bio`)
-4. Avatar (`avatar` / `avatar_url` / Google picture)
-5. Assigned Skills (`skills`)
-
-### Success Response: `200 OK`
-
-```json
-{
-  "completion_percentage": 80,
-  "is_complete": false,
-  "missing_fields": [
-    "avatar"
-  ],
-  "breakdown": {
-    "name": true,
-    "headline": true,
-    "bio": true,
-    "avatar": false,
-    "skills": true
-  }
-}
-```
-
-### Error Responses
-
-- `401 Unauthorized`: If the request lacks authentication.
-
-
+**End of Documentation**
