@@ -1,14 +1,40 @@
+
 from django.urls import path
+
 from .views import (
-    MembershipRequestListCreateView,
-    MembershipRequestDetailView,
+    MembershipRequestCreateView,
+    MembershipRequestListView,
+    MembershipRequestStatusView,
+    MembershipRequestCancelView,
     MembershipStatsView,
 )
 
 app_name = 'applications'
 
 urlpatterns = [
-    path('requests/', MembershipRequestListCreateView.as_view(), name='request-list-create'),
-    path('requests/stats/', MembershipStatsView.as_view(), name='request-stats'),
-    path('requests/<int:pk>/', MembershipRequestDetailView.as_view(), name='request-detail'),
+    path(
+        'requests/',
+        MembershipRequestCreateView.as_view(),
+        name='membership-request-create'
+    ),
+    path(
+        'requests/incoming/',
+        MembershipRequestListView.as_view(),
+        name='membership-request-list'
+    ),
+    path(
+        'requests/stats/',
+        MembershipStatsView.as_view(),
+        name='request-stats'
+    ),
+    path(
+        'requests/<uuid:public_id>/',
+        MembershipRequestStatusView.as_view(),
+        name='membership-request-status'
+    ),
+    path(
+        'requests/<uuid:public_id>/cancel/',
+        MembershipRequestCancelView.as_view(),
+        name='membership-request-cancel'
+    ),
 ]

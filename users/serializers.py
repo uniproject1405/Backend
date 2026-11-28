@@ -1,16 +1,39 @@
+import re
+
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError, transaction
 from rest_framework import serializers
-from projects.models import Skill
-from .models import Profile
+
+from .models import Profile, ProfileSkill
 
 User = get_user_model()
 
+class SkillNamesField(serializers.ListField):
+    def to_representation(self, data):
+        if hasattr(data, 'all'):
+            data = data.all()
+
+        return [skill.name for skill in data]
 
 class UserSerializer(serializers.ModelSerializer):
+    profile_public_id = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ['id', 'email', 'username']
-        read_only_fields = ['id', 'email', 'username']
+        fields = [
+            'profile_public_id',
+            'email',
+            'username',
+        ]
+        read_only_fields = fields
+
+    def get_profile_public_id(self, obj):
+        profile = getattr(obj, 'profile', None)
+
+        if profile is None:
+            return None
+
+        return str(profile.public_id)
 
 
 class UserRegistrationSerializer(serializers.Serializer):
@@ -21,41 +44,59 @@ class UserRegistrationSerializer(serializers.Serializer):
         style={'input_type': 'password'},
         min_length=8,
     )
-    username = serializers.CharField(required=False, allow_blank=True, max_length=150)
-
+    username = serializers.CharField(
+        required=True,
+        allow_blank=False,
+        trim_whitespace=True,
+        max_length=150
+    )
     def validate_email(self, value):
         normalized_email = value.strip().lower()
+
         if User.objects.filter(email__iexact=normalized_email).exists():
-            raise serializers.ValidationError("A user with this email already exists.")
+            raise serializers.ValidationError(
+                "A user with this email already exists."
+            )
+
         return normalized_email
 
     def validate_username(self, value):
         if value:
             username = value.strip()
+
             # Support usernames starting with @ like Instagram / Telegram
             if username.startswith('@'):
                 username = username[1:].strip()
+
             if not username:
-                raise serializers.ValidationError("Username cannot be empty or just '@'.")
+                raise serializers.ValidationError(
+                    "Username cannot be empty or just '@'."
+                )
+
             if User.objects.filter(username__iexact=username).exists():
-                raise serializers.ValidationError("A user with this username already exists.")
+                raise serializers.ValidationError(
+                    "A user with this username already exists."
+                )
+
             return username
+
         return value
 
     def create(self, validated_data):
         email = validated_data['email']
         password = validated_data['password']
-        username = validated_data.get('username') or email
-        if username and username.startswith('@'):
+        username = validated_data['username']
+
+        if username.startswith('@'):
             username = username[1:].strip()
 
         user = User.objects.create_user(
             username=username,
             email=email,
-            password=password,
+            password=password
         )
-        return user
 
+        return user
 
 class UserLoginSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
@@ -93,270 +134,279 @@ class GoogleAuthSerializer(serializers.Serializer):
         return attrs
 
 
-class ProfileSkillSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Skill
-        fields = ['id', 'name']
 
+class ProfileSerializer(serializers.ModelSerializer):
+    public_id = serializers.UUIDField(read_only=True)
 
-class PublicPartnerSerializer(serializers.ModelSerializer):
-    """
-    Public partner representation for explore and collaboration matching.
-    Omits sensitive private data like raw email and passwords.
-    """
-    id = serializers.ReadOnlyField(source='user.id')
-    user_id = serializers.ReadOnlyField(source='user.id')
-    username = serializers.ReadOnlyField(source='user.username')
-    display_name = serializers.ReadOnlyField()
-    skills = ProfileSkillSerializer(many=True, read_only=True)
-    skills_to_teach = ProfileSkillSerializer(source='skills', many=True, read_only=True)
-    avatar_display = serializers.SerializerMethodField()
-    telegram = serializers.ReadOnlyField()
-    instagram = serializers.ReadOnlyField()
-    github = serializers.ReadOnlyField()
-    linkedin = serializers.ReadOnlyField()
-    open_for_collaboration = serializers.ReadOnlyField(source='open_to_collaboration')
-    open_for_mentoring = serializers.ReadOnlyField(source='open_to_mentoring')
-    profile = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Profile
-        fields = [
-            'id',
-            'user_id',
-            'username',
-            'name',
-            'display_name',
-            'headline',
-            'bio',
-            'avatar_display',
-            'skills',
-            'skills_to_teach',
-            'contact_links',
-            'telegram',
-            'instagram',
-            'github',
-            'linkedin',
-            'open_to_collaboration',
-            'open_for_collaboration',
-            'open_to_mentoring',
-            'open_for_mentoring',
-            'created_at',
-            'profile',
-        ]
-
-    def get_avatar_display(self, obj):
-        if obj.avatar:
-            request = self.context.get('request')
-            return request.build_absolute_uri(obj.avatar.url) if request else obj.avatar.url
-        if obj.avatar_url:
-            return obj.avatar_url
-        if hasattr(obj.user, 'google_profile') and obj.user.google_profile.picture:
-            return obj.user.google_profile.picture
-        return None
-
-    def get_profile(self, obj):
-        return {
-            'name': obj.name,
-            'display_name': obj.display_name,
-            'headline': obj.headline,
-            'bio': obj.bio,
-            'avatar_display': self.get_avatar_display(obj),
-            'skills': ProfileSkillSerializer(obj.skills.all(), many=True).data,
-            'skills_to_teach': ProfileSkillSerializer(obj.skills.all(), many=True).data,
-            'contact_links': obj.contact_links,
-            'telegram': obj.telegram,
-            'github': obj.github,
-            'linkedin': obj.linkedin,
-            'open_to_collaboration': obj.open_to_collaboration,
-            'open_for_collaboration': obj.open_to_collaboration,
-            'open_to_mentoring': obj.open_to_mentoring,
-            'open_for_mentoring': obj.open_to_mentoring,
-        }
-
-
-class UserProfileSerializer(serializers.ModelSerializer):
-    """
-    Self profile management serializer with strict validation for contact channels.
-    """
-    username = serializers.ReadOnlyField(source='user.username')
-    email = serializers.ReadOnlyField(source='user.email')
-    display_name = serializers.ReadOnlyField()
-    skills = serializers.PrimaryKeyRelatedField(
-        many=True,
-        queryset=Skill.objects.all(),
+    username = serializers.CharField(
+        source='user.username',
         required=False,
+        allow_blank=False,
+        trim_whitespace=True,
+        max_length=150,
     )
-    skills_detail = ProfileSkillSerializer(source='skills', many=True, read_only=True)
-    skills_names = serializers.ListField(
-        child=serializers.CharField(max_length=50),
-        write_only=True,
+
+    name = serializers.CharField(
+        required=True,
+        allow_blank=False,
+        trim_whitespace=True,
+        max_length=100,
+    )
+
+    job_title = serializers.CharField(
+        required=True,
+        allow_blank=False,
+        trim_whitespace=True,
+        max_length=150,
+    )
+
+    skills = serializers.ListField(
+        child=serializers.CharField(
+            max_length=100,
+            trim_whitespace=True,
+        ),
         required=False,
+        allow_empty=False,
     )
-    skills_to_teach_names = serializers.ListField(
-        child=serializers.CharField(max_length=50),
-        write_only=True,
-        required=False,
-    )
-    first_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    last_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    telegram = serializers.CharField(required=False, allow_blank=True)
-    instagram = serializers.CharField(required=False, allow_blank=True)
-    github = serializers.CharField(required=False, allow_blank=True)
-    linkedin = serializers.CharField(required=False, allow_blank=True)
-    open_for_collaboration = serializers.BooleanField(source='open_to_collaboration', required=False)
-    open_for_mentoring = serializers.BooleanField(source='open_to_mentoring', required=False)
-    avatar_display = serializers.SerializerMethodField()
 
-    class Meta:
-        model = Profile
-        fields = [
-            'id',
-            'username',
-            'email',
-            'first_name',
-            'last_name',
-            'name',
-            'display_name',
-            'headline',
-            'bio',
-            'avatar',
-            'avatar_url',
-            'avatar_display',
-            'skills',
-            'skills_detail',
-            'skills_names',
-            'skills_to_teach_names',
-            'contact_links',
-            'telegram',
-            'instagram',
-            'github',
-            'linkedin',
-            'open_to_collaboration',
-            'open_for_collaboration',
-            'open_to_mentoring',
-            'open_for_mentoring',
-            'created_at',
-            'updated_at',
-        ]
-        read_only_fields = ['id', 'username', 'email', 'avatar_display', 'created_at', 'updated_at']
+    def validate_username(self, value):
+        value = value.strip()
 
-    def get_avatar_display(self, obj):
-        if obj.avatar:
-            request = self.context.get('request')
-            return request.build_absolute_uri(obj.avatar.url) if request else obj.avatar.url
-        if obj.avatar_url:
-            return obj.avatar_url
-        if hasattr(obj.user, 'google_profile') and obj.user.google_profile.picture:
-            return obj.user.google_profile.picture
-        return None
+        if not value:
+            raise serializers.ValidationError(
+                "Username cannot be empty."
+            )
 
-    def validate_contact_links(self, value):
-        if not isinstance(value, (list, dict)):
-            raise serializers.ValidationError("Contact links must be a list of objects or a dictionary.")
+        existing_users = User.objects.filter(
+            username__iexact=value
+        )
 
-        if isinstance(value, dict):
-            for platform, url in value.items():
-                if not isinstance(url, str) or not url.strip():
-                    raise serializers.ValidationError(f"Contact link for '{platform}' cannot be empty.")
-                url_val = url.strip()
-                if platform.lower() == 'email':
-                    serializers.EmailField().run_validation(url_val)
-                elif platform.lower() == 'telegram':
-                    if not (url_val.startswith('@') or url_val.startswith('https://t.me/')):
-                        raise serializers.ValidationError(f"Invalid Telegram handle or link: {url_val}")
-                elif platform.lower() == 'instagram':
-                    if not (url_val.startswith('@') or url_val.startswith('https://instagram.com/') or url_val.startswith('https://www.instagram.com/')):
-                        raise serializers.ValidationError(f"Invalid Instagram handle or link: {url_val}")
-                else:
-                    if not (url_val.startswith('http://') or url_val.startswith('https://') or url_val.startswith('@')):
-                        raise serializers.ValidationError(f"Invalid link or handle for '{platform}': {url_val}")
-            return value
+        if self.instance:
+            existing_users = existing_users.exclude(
+                pk=self.instance.user_id
+            )
 
-        for item in value:
-            if not isinstance(item, dict):
-                raise serializers.ValidationError("Each contact link entry must be a dictionary.")
-
-            for platform, url in item.items():
-                if not isinstance(url, str) or not url.strip():
-                    raise serializers.ValidationError("Contact link values cannot be empty.")
-                url_val = url.strip()
-                if platform.lower() == 'email':
-                    serializers.EmailField().run_validation(url_val)
-                elif platform.lower() == 'telegram':
-                    if not (url_val.startswith('@') or url_val.startswith('https://t.me/')):
-                        raise serializers.ValidationError(f"Invalid Telegram handle or link: {url_val}")
-                elif platform.lower() == 'instagram':
-                    if not (url_val.startswith('@') or url_val.startswith('https://instagram.com/') or url_val.startswith('https://www.instagram.com/')):
-                        raise serializers.ValidationError(f"Invalid Instagram handle or link: {url_val}")
-                else:
-                    if not (url_val.startswith('http://') or url_val.startswith('https://') or url_val.startswith('@')):
-                        raise serializers.ValidationError(f"Invalid URL or handle for '{platform}': {url_val}")
+        if existing_users.exists():
+            raise serializers.ValidationError(
+                "This username is already taken."
+            )
 
         return value
 
+    def validate_contact_links(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError(
+                "Contact links must be an object."
+            )
+
+        allowed_fields = {"email", "linkedin", "github"}
+
+        unknown_fields = set(value.keys()) - allowed_fields
+
+        if unknown_fields:
+            raise serializers.ValidationError(
+                "Only email, linkedin and github are allowed."
+            )
+
+        existing = {}
+        if self.instance and isinstance(self.instance.contact_links, dict):
+            existing = self.instance.contact_links.copy()
+
+        result = {
+            "email": "",
+            "linkedin": "",
+            "github": "",
+        }
+
+        result.update(existing)
+        result.update(value)
+
+        for field, link in result.items():
+            if not isinstance(link, str):
+                raise serializers.ValidationError({
+                    field: "This field must be a string."
+                })
+
+            link = link.strip()
+            result[field] = link
+
+            if not link:
+                continue
+
+            if field == "email":
+                serializers.EmailField().run_validation(link)
+            else:
+                serializers.URLField().run_validation(link)
+
+        return result
+
+    def validate(self, attrs):
+        skills = attrs.get('skills')
+
+        if skills is None:
+            if self.instance:
+                skills = list(
+                    self.instance.skills.values_list(
+                        'name',
+                        flat=True
+                    )
+                )
+            else:
+                skills = []
+
+        if not skills:
+            raise serializers.ValidationError({
+                "skills": "At least one skill is required."
+            })
+
+        if len(skills) > 20:
+            raise serializers.ValidationError({
+                "skills": "You can have up to 20 skills."
+            })
+
+        seen = set()
+
+        for name in skills:
+            normalized = name.casefold()
+
+            if not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9 .+#/&()_-]*",
+                name
+            ):
+                raise serializers.ValidationError({
+                    "skills": "Skill names must contain English characters only."
+                })
+
+            if normalized in seen:
+                raise serializers.ValidationError({
+                    "skills": "Duplicate skills are not allowed."
+                })
+
+            seen.add(normalized)
+
+        name = attrs.get(
+            'name',
+            self.instance.name if self.instance else None
+        )
+
+        job_title = attrs.get(
+            'job_title',
+            self.instance.job_title if self.instance else None
+        )
+
+        if not name or not name.strip():
+            raise serializers.ValidationError({
+                "name": "Name is required."
+            })
+
+        if not job_title or not job_title.strip():
+            raise serializers.ValidationError({
+                "job_title": "Job title is required."
+            })
+
+        return attrs
+
+    def get_or_create_profile_skills(self, skill_names):
+        result = []
+
+        for name in skill_names:
+            name = name.strip()
+
+            skill = ProfileSkill.objects.filter(
+                name__iexact=name
+            ).first()
+
+            if skill is None:
+                try:
+                    with transaction.atomic():
+                        skill = ProfileSkill.objects.create(
+                            name=name
+                        )
+                except IntegrityError:
+                    skill = ProfileSkill.objects.get(
+                        name__iexact=name
+                    )
+
+            result.append(skill)
+
+        return result
+
+    def create(self, validated_data):
+        user_data = validated_data.pop('user', {})
+        username = user_data.get('username')
+        skill_names = validated_data.pop('skills', [])
+
+        with transaction.atomic():
+            user = self.context['request'].user
+
+            if username is not None:
+                user.username = username
+                user.save(update_fields=['username'])
+
+            profile = super().create({
+                **validated_data,
+                'user': user,
+            })
+
+            skills = self.get_or_create_profile_skills(skill_names)
+            profile.skills.set(skills)
+
+        return profile
+
     def update(self, instance, validated_data):
-        skills_names = validated_data.pop('skills_names', None)
-        skills_to_teach = validated_data.pop('skills_to_teach_names', None)
-        skills = validated_data.pop('skills', None)
-        first_name = validated_data.pop('first_name', None)
-        last_name = validated_data.pop('last_name', None)
-        telegram = validated_data.pop('telegram', None)
-        instagram = validated_data.pop('instagram', None)
-        github = validated_data.pop('github', None)
-        linkedin = validated_data.pop('linkedin', None)
+        skill_names = validated_data.pop('skills', None)
+        user_data = validated_data.pop('user', {})
+        username = user_data.get('username')
 
-        # Update contact links if social handles were provided directly
-        if any(x is not None for x in [telegram, instagram, github, linkedin]):
-            contact_dict = {}
-            if isinstance(instance.contact_links, list):
-                for item in instance.contact_links:
-                    if isinstance(item, dict):
-                        contact_dict.update(item)
-            elif isinstance(instance.contact_links, dict):
-                contact_dict.update(instance.contact_links)
+        with transaction.atomic():
+            if username is not None:
+                instance.user.username = username
+                instance.user.save(update_fields=['username'])
 
-            if telegram is not None:
-                contact_dict['telegram'] = telegram.strip()
-            if instagram is not None:
-                contact_dict['instagram'] = instagram.strip()
-            if github is not None:
-                contact_dict['github'] = github.strip()
-            if linkedin is not None:
-                contact_dict['linkedin'] = linkedin.strip()
+            profile = super().update(instance, validated_data)
 
-            instance.contact_links = [{k: v} for k, v in contact_dict.items() if v]
+            if skill_names is not None:
+                skills = self.get_or_create_profile_skills(skill_names)
+                profile.skills.set(skills)
 
-        # Update User first_name/last_name if provided
-        user_updated = False
-        if first_name is not None:
-            instance.user.first_name = first_name
-            user_updated = True
-        if last_name is not None:
-            instance.user.last_name = last_name
-            user_updated = True
-        if user_updated:
-            instance.user.save()
-            if not validated_data.get('name') and not instance.name:
-                instance.name = f"{instance.user.first_name} {instance.user.last_name}".strip()
+        return profile
 
-        instance = super().update(instance, validated_data)
+    class Meta:
+        model = Profile
+        fields = [
+            'public_id',
+            'username',
+            'name',
+            'bio',
+            'job_title',
+            'skills',
+            'avatar',
+            'contact_links',
+            'open_to_collaboration',
+            'open_to_mentoring',
+        ]
 
-        # Handle skill assignments
-        if skills is not None:
-            instance.skills.set(skills)
-        elif skills_names is not None or skills_to_teach is not None:
-            target_skills = skills_names if skills_names is not None else skills_to_teach
-            skill_objs = []
-            for name in target_skills:
-                name_clean = name.strip()
-                if name_clean:
-                    skill_obj, _ = Skill.objects.get_or_create(name=name_clean)
-                    skill_objs.append(skill_obj)
-            instance.skills.set(skill_objs)
+class PublicPartnerSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(
+        source='user.username',
+        read_only=True,
+    )
 
-        return instance
+    skills = SkillNamesField(read_only=True)
 
+    class Meta:
+        model = Profile
+        fields = [
+            'public_id',
+            'username',
+            'name',
+            'bio',
+            'job_title',
+            'skills',
+            'avatar',
+            'open_to_collaboration',
+            'open_to_mentoring',
+        ]
 
 class PasswordResetRequestSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
@@ -389,7 +439,9 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         if attrs.get('new_password') != attrs.get('confirm_password'):
-            raise serializers.ValidationError({"confirm_password": ["Passwords do not match."]})
+            raise serializers.ValidationError({
+                "confirm_password": ["Passwords do not match."]
+            })
         return attrs
 
 
@@ -414,5 +466,7 @@ class PasswordChangeSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         if attrs.get('new_password') != attrs.get('confirm_password'):
-            raise serializers.ValidationError({"confirm_password": ["Passwords do not match."]})
+            raise serializers.ValidationError({
+                "confirm_password": ["Passwords do not match."]
+            })
         return attrs

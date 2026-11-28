@@ -1,7 +1,10 @@
 import urllib.parse
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.http import JsonResponse, HttpResponseRedirect
+from django.shortcuts import get_object_or_404
+
 from rest_framework import status, generics, filters
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -11,18 +14,20 @@ from rest_framework.authtoken.models import Token
 from rest_framework.exceptions import AuthenticationFailed, ValidationError
 
 from .models import Profile
+
 from .serializers import (
     UserRegistrationSerializer,
     UserLoginSerializer,
     UserSerializer,
     GoogleAuthSerializer,
+    ProfileSerializer,
     PublicPartnerSerializer,
-    UserProfileSerializer,
     PasswordResetRequestSerializer,
     PasswordResetValidateSerializer,
     PasswordResetConfirmSerializer,
     PasswordChangeSerializer,
 )
+
 from .services import (
     authenticate_google,
     get_google_auth_url,
@@ -31,9 +36,9 @@ from .services import (
     reset_user_password,
 )
 
+from .utils import is_profile_complete
+
 User = get_user_model()
-
-
 
 def users_api(request):
     """
@@ -53,7 +58,6 @@ def users_api(request):
         "message": "API is working!",
         "status": "success",
     })
-
 
 class RegisterView(APIView):
     """
@@ -76,7 +80,6 @@ class RegisterView(APIView):
             )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
 class LoginView(APIView):
     """
     Authenticate user by email and password.
@@ -98,7 +101,6 @@ class LoginView(APIView):
             )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
 class CurrentUserView(APIView):
     """
     Retrieve or update profile details for the currently authenticated user.
@@ -107,25 +109,84 @@ class CurrentUserView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        profile, _ = Profile.objects.get_or_create(user=request.user)
-        user_data = UserSerializer(request.user).data
-        user_data['profile'] = UserProfileSerializer(profile, context={'request': request}).data
+        user_data = UserSerializer(
+            request.user,
+            context={"request": request},
+        ).data
+
+        try:
+            profile = request.user.profile
+            user_data["profile"] = ProfileSerializer(
+                profile,
+                context={"request": request},
+            ).data
+        except Profile.DoesNotExist:
+            user_data["profile"] = None
+            user_data["message"] = "Please complete your profile."
+
         return Response(user_data, status=status.HTTP_200_OK)
 
     def patch(self, request):
-        profile, _ = Profile.objects.get_or_create(user=request.user)
-        serializer = UserProfileSerializer(
+        try:
+            profile = request.user.profile
+        except Profile.DoesNotExist:
+            return Response(
+                {"message": "Please create your profile first."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = ProfileSerializer(
             profile,
             data=request.data,
             partial=True,
-            context={'request': request},
+            context={"request": request},
         )
+
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
+class ProfileCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def post(self, request):
+        if Profile.objects.filter(user=request.user).exists():
+            return Response(
+                {"message": "You already have a profile."},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        serializer = ProfileSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+
+        if serializer.is_valid():
+            profile = serializer.save()
+
+            return Response(
+                {
+                    "email": request.user.email,
+                    "username": request.user.username,
+                    "profile": ProfileSerializer(
+                        profile,
+                        context={"request": request},
+                    ).data,
+                    "message": "Profile created successfully.",
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 class LogoutView(APIView):
     """
     Invalidate the active authentication token for the current user.
@@ -152,16 +213,21 @@ class GoogleAuthView(APIView):
 
     def post(self, request):
         serializer = GoogleAuthSerializer(data=request.data)
+
         if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         try:
             user, token, is_new = authenticate_google(
-                id_token=serializer.validated_data.get('id_token'),
-                access_token=serializer.validated_data.get('access_token'),
-                code=serializer.validated_data.get('code'),
-                redirect_uri=serializer.validated_data.get('redirect_uri'),
+                id_token=serializer.validated_data.get("id_token"),
+                access_token=serializer.validated_data.get("access_token"),
+                code=serializer.validated_data.get("code"),
+                redirect_uri=serializer.validated_data.get("redirect_uri"),
             )
+
             return Response(
                 {
                     "token": token.key,
@@ -170,13 +236,22 @@ class GoogleAuthView(APIView):
                 },
                 status=status.HTTP_200_OK,
             )
+
         except ValidationError as exc:
-            return Response(exc.detail, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                exc.detail,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         except AuthenticationFailed as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         except Exception:
             return Response(
-                {"detail": "Authentication failed. Please verify your Google credentials."},
+                {"detail": "Google authentication failed. Please try again."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -188,11 +263,14 @@ class GoogleLoginRedirectView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        state = request.GET.get('state')
+        state = request.query_params.get("state")
         auth_url = get_google_auth_url(state=state)
 
-        if request.GET.get('format') == 'json':
-            return Response({"auth_url": auth_url}, status=status.HTTP_200_OK)
+        if request.query_params.get("format") == "json":
+            return Response(
+                {"auth_url": auth_url},
+                status=status.HTTP_200_OK,
+            )
 
         return HttpResponseRedirect(auth_url)
 
@@ -204,35 +282,59 @@ class GoogleCallbackView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173').rstrip('/')
-        error = request.GET.get('error')
+        frontend_url = getattr(
+            settings,
+            "FRONTEND_URL",
+            "http://localhost:5173",
+        ).rstrip("/")
+
+        error = request.query_params.get("error")
+
         if error:
-            redirect_target = f"{frontend_url}/login?error={urllib.parse.quote(error)}"
+            redirect_target = (
+                f"{frontend_url}/login?error="
+                f"{urllib.parse.quote(error)}"
+            )
             return HttpResponseRedirect(redirect_target)
 
-        code = request.GET.get('code')
+        code = request.query_params.get("code")
+
         if not code:
-            redirect_target = f"{frontend_url}/login?error={urllib.parse.quote('Authorization code was not provided')}"
+            error_message = "Authorization code was not provided"
+            redirect_target = (
+                f"{frontend_url}/login?error="
+                f"{urllib.parse.quote(error_message)}"
+            )
             return HttpResponseRedirect(redirect_target)
 
         try:
-            user, token, _ = authenticate_google(code=code)
+            redirect_uri = getattr(settings, "GOOGLE_REDIRECT_URI", "")
+
+            user, token, _ = authenticate_google(
+                code=code,
+                redirect_uri=redirect_uri,
+            )
+
             redirect_target = (
                 f"{frontend_url}/login?token={token.key}"
                 f"&email={urllib.parse.quote(user.email)}"
                 f"&username={urllib.parse.quote(user.username)}"
             )
-            return HttpResponseRedirect(redirect_target)
-        except Exception as exc:
-            redirect_target = f"{frontend_url}/login?error={urllib.parse.quote(str(exc))}"
+
             return HttpResponseRedirect(redirect_target)
 
+        except Exception as exc:
+            redirect_target = (
+                f"{frontend_url}/login?error="
+                f"{urllib.parse.quote(str(exc))}"
+            )
+            return HttpResponseRedirect(redirect_target)
 
 class PartnerExploreView(generics.ListAPIView):
     """
     Explore and filter users/partners open for collaboration and mentoring.
     Supports query parameters:
-      - search: text search across username, name, headline, bio, skills
+      - search: text search across username, name, job_title, bio, skills
       - skill: filter by skill ID or skill name
       - collaboration: filter by open_to_collaboration (true/false)
       - mentoring: filter by open_to_mentoring (true/false)
@@ -241,7 +343,7 @@ class PartnerExploreView(generics.ListAPIView):
     permission_classes = [AllowAny]
     serializer_class = PublicPartnerSerializer
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ['name', 'headline', 'bio', 'user__username', 'skills__name']
+    search_fields = ['name', 'job_title', 'bio', 'user__username', 'skills__name']
     ordering_fields = ['created_at', 'name', 'updated_at']
     ordering = ['-created_at']
 
@@ -257,10 +359,9 @@ class PartnerExploreView(generics.ListAPIView):
         skill_param = self.request.query_params.get('skill')
         if skill_param:
             skill_clean = skill_param.strip()
-            if skill_clean.isdigit():
-                queryset = queryset.filter(skills__id=int(skill_clean))
-            else:
-                queryset = queryset.filter(skills__name__icontains=skill_clean)
+            queryset = queryset.filter(
+                skills__name__icontains=skill_clean
+            )
 
         # Collaboration filter
         collab_param = (
@@ -291,7 +392,7 @@ class PartnerExploreView(generics.ListAPIView):
                 queryset = queryset.filter(
                     Q(user__username__icontains=cleaned_search) |
                     Q(name__icontains=cleaned_search) |
-                    Q(headline__icontains=cleaned_search) |
+                    Q(job_title__icontains=cleaned_search) |
                     Q(bio__icontains=cleaned_search) |
                     Q(skills__name__icontains=cleaned_search)
                 )
@@ -302,90 +403,124 @@ class PartnerExploreView(generics.ListAPIView):
 
 class PublicProfileDetailView(generics.RetrieveAPIView):
     """
-    Retrieve public profile information for a user by their user ID.
-    Omit sensitive private data (email, password).
+    Retrieve a public profile by its UUID.
     """
     permission_classes = [AllowAny]
     serializer_class = PublicPartnerSerializer
 
     def get_object(self):
-        pk = self.kwargs.get('pk')
-        user = generics.get_object_or_404(User, id=pk, is_active=True)
-        profile, _ = Profile.objects.get_or_create(user=user)
-        return profile
+        return get_object_or_404(
+            Profile.objects.select_related("user").prefetch_related("skills"),
+            public_id=self.kwargs["public_id"],
+            user__is_active=True,
+        )
 
 
 class UserDetailView(generics.RetrieveAPIView):
     """
-    Retrieve public details and profile for a specific user ID.
-    Supports frontend client profile lookups (/api/users/<id>/).
+    Retrieve public profile details by profile UUID.
     """
     permission_classes = [AllowAny]
     serializer_class = PublicPartnerSerializer
 
     def get_object(self):
-        pk = self.kwargs.get('pk')
-        user = generics.get_object_or_404(User, id=pk, is_active=True)
-        profile, _ = Profile.objects.get_or_create(user=user)
-        return profile
-
+        return get_object_or_404(
+            Profile.objects.select_related("user").prefetch_related("skills"),
+            public_id=self.kwargs["public_id"],
+            user__is_active=True,
+        )
 
 class MyProfileView(generics.RetrieveUpdateAPIView):
     """
     Retrieve or update the authenticated user's own profile.
-    Supports GET, PUT, and PATCH.
     """
     parser_classes = [MultiPartParser, FormParser, JSONParser]
     permission_classes = [IsAuthenticated]
-    serializer_class = UserProfileSerializer
+    serializer_class = ProfileSerializer
 
     def get_object(self):
-        profile, _ = Profile.objects.get_or_create(user=self.request.user)
-        return profile
+        return get_object_or_404(
+            Profile,
+            user=self.request.user,
+        )
 
 
 class ProfileCompletionView(APIView):
     """
-    Calculates profile completion percentage and highlights missing fields.
-    Weighted criteria (20% each):
-      1. Name
-      2. Headline
-      3. Bio
-      4. Avatar (uploaded or Google OAuth profile picture)
-      5. Skills (at least one assigned)
+    Calculate profile completion based on required profile fields.
+    Google users must also customize their initial username.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        profile, _ = Profile.objects.get_or_create(user=request.user)
+        try:
+            profile = request.user.profile
+        except Profile.DoesNotExist:
+            profile = None
 
-        has_name = bool(profile.name and profile.name.strip())
-        has_headline = bool(profile.headline and profile.headline.strip())
-        has_bio = bool(profile.bio and profile.bio.strip())
-        has_avatar = bool(
-            profile.avatar or
-            profile.avatar_url or
-            (hasattr(request.user, 'google_profile') and request.user.google_profile.picture)
+        has_name = bool(
+            profile and profile.name and profile.name.strip()
         )
-        has_skills = profile.skills.exists()
+
+        has_job_title = bool(
+            profile and profile.job_title and profile.job_title.strip()
+        )
+
+        has_skills = bool(
+            profile and profile.skills.exists()
+        )
 
         breakdown = {
-            'name': has_name,
-            'headline': has_headline,
-            'bio': has_bio,
-            'avatar': has_avatar,
-            'skills': has_skills,
+            "name": has_name,
+            "job_title": has_job_title,
+            "skills": has_skills,
         }
 
-        score = sum(20 for val in breakdown.values() if val)
-        missing_fields = [field for field, completed in breakdown.items() if not completed]
+        google_profile = getattr(
+            request.user,
+            "google_profile",
+            None,
+        )
+
+        if google_profile:
+            initial_username = google_profile.initial_username
+
+            has_custom_username = bool(
+                request.user.username.strip()
+                and (
+                    not initial_username
+                    or request.user.username.strip().lower()
+                    != initial_username.strip().lower()
+                )
+                and not re.fullmatch(
+                    r"user_[0-9a-f]{8}",
+                    request.user.username.strip().lower(),
+                )
+            )
+
+            breakdown["username"] = has_custom_username
+
+        completed_count = sum(breakdown.values())
+        total_count = len(breakdown)
+
+        score = round(
+            completed_count / total_count * 100
+        )
+
+        is_complete = is_profile_complete(profile)
+
+        missing_fields = [
+            field
+            for field, completed in breakdown.items()
+            if not completed
+        ]
 
         return Response(
             {
-                'completion_percentage': score,
-                'is_complete': score == 100,
-                'missing_fields': missing_fields,
-                'breakdown': breakdown,
+                "completion_percentage": score,
+                "is_complete": is_complete,
+                "missing_fields": missing_fields,
+                "breakdown": breakdown,
             },
             status=status.HTTP_200_OK,
         )

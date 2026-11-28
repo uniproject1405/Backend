@@ -1,47 +1,73 @@
-from django.db import models
+import uuid
+
 from django.conf import settings
+from django.db import models
+from django.db.models.functions import Lower
 
 
-class GoogleProfile(models.Model):
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="google_profile",
+class ProfileSkill(models.Model):
+    name = models.CharField(
+        max_length=100,
+        verbose_name="Profile Skill Name"
     )
-    google_id = models.CharField(max_length=255, unique=True, db_index=True)
-    picture = models.URLField(max_length=500, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name = "Google Profile"
-        verbose_name_plural = "Google Profiles"
+        constraints = [
+            models.UniqueConstraint(
+                Lower("name"),
+                name="unique_profile_skill_name_ci"
+            )
+        ]
 
     def __str__(self):
-        return f"{self.user.username} ({self.google_id})"
+        return self.name
 
 
 class Profile(models.Model):
+    public_id = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        editable=False
+    )
+
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="profile",
+        related_name="profile"
     )
-    name = models.CharField(max_length=100, blank=True, verbose_name="Full Name")
-    headline = models.CharField(max_length=150, blank=True, verbose_name="Headline")
-    bio = models.TextField(blank=True, verbose_name="Bio")
-    avatar = models.ImageField(upload_to="avatars/", blank=True, null=True, verbose_name="Avatar")
-    avatar_url = models.URLField(max_length=500, blank=True, verbose_name="Avatar URL")
+
+    name = models.CharField(max_length=100)
+
+    bio = models.TextField(blank=True)
+
+    job_title = models.CharField(
+        max_length=150,
+    )
+
     skills = models.ManyToManyField(
-        'projects.Skill',
-        related_name='profiles',
-        blank=True,
-        verbose_name="Skills",
+        ProfileSkill,
+        related_name="profiles",
+        blank=True
     )
-    contact_links = models.JSONField(default=list, blank=True, verbose_name="Contact Links")
-    open_to_collaboration = models.BooleanField(default=True, verbose_name="Open to Collaboration")
-    open_to_mentoring = models.BooleanField(default=False, verbose_name="Open to Mentoring")
+
+    avatar = models.ImageField(
+        upload_to="avatars/",
+        blank=True,
+        null=True
+    )
+
+    contact_links = models.JSONField(
+        default=dict,
+        blank=True
+    )
+
+    open_to_collaboration = models.BooleanField(default=False)
+
+    open_to_mentoring = models.BooleanField(default=False)
+
     created_at = models.DateTimeField(auto_now_add=True)
+
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -56,36 +82,37 @@ class Profile(models.Model):
     def display_name(self):
         return self.name or self.user.username
 
-    @property
-    def open_for_collaboration(self):
-        return self.open_to_collaboration
 
-    @property
-    def open_for_mentoring(self):
-        return self.open_to_mentoring
+class GoogleProfile(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="google_profile",
+    )
 
-    def get_contact(self, platform):
-        if isinstance(self.contact_links, dict):
-            return self.contact_links.get(platform, '')
-        if isinstance(self.contact_links, list):
-            for item in self.contact_links:
-                if isinstance(item, dict) and platform in item:
-                    return item[platform]
-        return ''
+    google_id = models.CharField(
+        max_length=255,
+        unique=True,
+        db_index=True
+    )
 
-    @property
-    def telegram(self):
-        return self.get_contact('telegram')
+    picture = models.URLField(
+        max_length=500,
+        blank=True
+    )
 
-    @property
-    def instagram(self):
-        return self.get_contact('instagram')
+    initial_username = models.CharField(
+        max_length=150,
+        blank=True
+    )
 
-    @property
-    def github(self):
-        return self.get_contact('github')
+    created_at = models.DateTimeField(auto_now_add=True)
 
-    @property
-    def linkedin(self):
-        return self.get_contact('linkedin')
+    updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        verbose_name = "Google Profile"
+        verbose_name_plural = "Google Profiles"
+
+    def __str__(self):
+        return f"{self.user.username} ({self.google_id})"

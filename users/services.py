@@ -1,18 +1,23 @@
 import re
+import secrets
 import urllib.parse
+
 import requests
+
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import send_mail
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
+
 from rest_framework.exceptions import AuthenticationFailed, ValidationError
 from rest_framework.authtoken.models import Token
+
 from google.oauth2 import id_token as google_id_token
 from google.auth.transport import requests as google_requests
 
-from .models import GoogleProfile
+from .models import GoogleProfile, Profile
 
 User = get_user_model()
 
@@ -29,18 +34,33 @@ def _generate_unique_username(name, email):
 
     slug = re.sub(r"[\s\-]+", "_", source)
     slug = re.sub(r"[^a-zA-Z0-9_]", "", slug).lower()
+
     if not slug:
         slug = "user"
+
     slug = slug[:140]
 
     username = slug
     counter = 1
+
     while User.objects.filter(username__iexact=username).exists():
         suffix = f"_{counter}"
         username = f"{slug[:150 - len(suffix)]}{suffix}"
         counter += 1
 
     return username
+
+
+def _generate_random_unique_username():
+    """
+    Generates a temporary unique random username for Google OAuth.
+    """
+
+    while True:
+        candidate = f"user_{secrets.token_hex(4)}"
+
+        if not User.objects.filter(username__iexact=candidate).exists():
+            return candidate
 
 
 def verify_id_token(token_string):
@@ -118,7 +138,7 @@ def get_or_create_google_user(profile_data):
     normalized_email = email.strip().lower()
     google_id = str(profile_data.get("sub") or profile_data.get("id") or "")
     picture = profile_data.get("picture") or ""
-    name = profile_data.get("name") or profile_data.get("given_name") or ""
+    name = (profile_data.get("name") or profile_data.get("given_name") or "").strip()
 
     user = User.objects.filter(email__iexact=normalized_email).first()
     is_new = False
@@ -132,7 +152,8 @@ def get_or_create_google_user(profile_data):
                 defaults={"google_id": google_id, "picture": picture},
             )
     else:
-        username = _generate_unique_username(name, normalized_email)
+# Generate temporary unique random username
+        username = _generate_random_unique_username()
         user = User.objects.create_user(
             username=username,
             email=normalized_email,
@@ -146,8 +167,14 @@ def get_or_create_google_user(profile_data):
                 user=user,
                 google_id=google_id,
                 picture=picture,
+                initial_username=username,
             )
 
+        # Initialize profile with name from Google if available
+        Profile.objects.get_or_create(
+            user=user,
+            defaults={"name": name},
+        )
     token, _ = Token.objects.get_or_create(user=user)
     return user, token, is_new
 
@@ -181,7 +208,6 @@ def get_google_auth_url(state=None):
         params["state"] = state
 
     return f"{GOOGLE_AUTH_URL}?{urllib.parse.urlencode(params)}"
-
 
 def generate_password_reset_token(user):
     """

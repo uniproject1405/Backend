@@ -1,8 +1,13 @@
 from django.db import models
 from django.conf import settings
-
+import uuid
 
 class MembershipRequest(models.Model):
+    public_id = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        editable=False
+    )
     STATUS_PENDING = 'pending'
     STATUS_ACCEPTED = 'accepted'
     STATUS_REJECTED = 'rejected'

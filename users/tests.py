@@ -1,12 +1,23 @@
+import re
 from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.core import mail
-from django.test import TestCase
+from django.test import TestCase, RequestFactory
+
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.authtoken.models import Token
+from rest_framework.test import APIClient
+
 from projects.models import Skill
-from users.models import GoogleProfile, Profile
-from users.services import generate_password_reset_token
+
+from .models import Profile, ProfileSkill, GoogleProfile
+from .utils import is_profile_complete
+from .permissions import IsProfileComplete
+from .services import (
+    generate_password_reset_token,
+    get_or_create_google_user,
+)
 
 User = get_user_model()
 
@@ -14,7 +25,6 @@ User = get_user_model()
 class UsersAPITest(TestCase):
     def test_users_api_returns_success(self):
         response = self.client.get("/api/users/")
-
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.json(),
@@ -67,7 +77,7 @@ class GoogleAuthTests(TestCase):
         self.assertIn("token", data)
         self.assertTrue(data["is_new_user"])
         self.assertEqual(data["user"]["email"], "alex.doe@example.com")
-        self.assertEqual(data["user"]["username"], "alex_doe")
+        self.assertTrue(re.fullmatch(r"user_[0-9a-f]{8}", data["user"]["username"]))
 
         user = User.objects.get(email="alex.doe@example.com")
         self.assertFalse(user.has_usable_password())
@@ -915,3 +925,90 @@ class PasswordChangeTests(TestCase):
         )
         self.assertEqual(response.status_code, 401)
 
+class GoogleAuthAndProfileViewerTest(TestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.skill = ProfileSkill.objects.create(name="Python")
+
+    def test_google_login_generates_random_unique_username(self):
+        profile_data = {
+            "email": "testuser@gmail.com",
+            "email_verified": True,
+            "sub": "google-123456",
+            "name": "Ali Rezaei",
+            "picture": "https://example.com/photo.jpg",
+        }
+        user, token, is_new = get_or_create_google_user(profile_data)
+
+        self.assertTrue(is_new)
+        self.assertTrue(re.fullmatch(r"user_[0-9a-f]{8}", user.username))
+        self.assertNotEqual(user.username, "ali_rezaei")
+        self.assertEqual(user.email, "testuser@gmail.com")
+        self.assertEqual(user.google_profile.initial_username, user.username)
+
+    def test_google_user_is_viewer_mode_initially(self):
+        profile_data = {
+            "email": "google_new@gmail.com",
+            "email_verified": True,
+            "sub": "google-99999",
+            "name": "Sarah Rad",
+        }
+        user, token, _ = get_or_create_google_user(profile_data)
+        profile = user.profile
+
+        self.assertFalse(is_profile_complete(profile))
+
+        profile.job_title = "Software Developer"
+        profile.save()
+        profile.skills.add(self.skill)
+        self.assertFalse(is_profile_complete(profile))
+
+    def test_google_user_exits_viewer_mode_when_profile_complete(self):
+        profile_data = {
+            "email": "sarah.dev@gmail.com",
+            "email_verified": True,
+            "sub": "google-88888",
+            "name": "Sarah Rad",
+        }
+        user, token, _ = get_or_create_google_user(profile_data)
+        profile = user.profile
+
+        profile.job_title = "Software Developer"
+        profile.save()
+        profile.skills.add(self.skill)
+
+        self.assertFalse(is_profile_complete(profile))
+
+        user.username = "sarah_rad"
+        user.save()
+        profile.refresh_from_db()
+
+        self.assertTrue(is_profile_complete(profile))
+
+    def test_is_profile_complete_permission_viewer_access(self):
+        profile_data = {
+            "email": "viewer_user@gmail.com",
+            "email_verified": True,
+            "sub": "google-77777",
+            "name": "Viewer Only",
+        }
+        user, token, _ = get_or_create_google_user(profile_data)
+        permission = IsProfileComplete()
+
+        get_request = self.factory.get("/api/projects/")
+        get_request.user = user
+        self.assertTrue(permission.has_permission(get_request, None))
+
+        post_request = self.factory.post("/api/projects/")
+        post_request.user = user
+        self.assertFalse(permission.has_permission(post_request, None))
+
+        profile = user.profile
+        profile.job_title = "Developer"
+        profile.save()
+        profile.skills.add(self.skill)
+
+        user.username = "viewer_custom"
+        user.save()
+
+        self.assertTrue(permission.has_permission(post_request, None))

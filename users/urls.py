@@ -6,10 +6,12 @@ urlpatterns = [
     path("register/", views.RegisterView.as_view(), name="user-register"),
     path("login/", views.LoginView.as_view(), name="user-login"),
     path("me/", views.CurrentUserView.as_view(), name="user-current"),
+    path("me/profile/", views.ProfileCreateView.as_view(), name="profile-create"),
     path("logout/", views.LogoutView.as_view(), name="user-logout"),
-    path("google/", views.GoogleAuthView.as_view(), name="user-google-auth"),
-    path("google/login/", views.GoogleLoginRedirectView.as_view(), name="user-google-login-redirect"),
-    path("google/callback/", views.GoogleCallbackView.as_view(), name="user-google-callback"),
+    # Google authentication endpoints
+    path("google/", views.GoogleAuthView.as_view(), name="google-auth"),
+    path("google/login/", views.GoogleLoginRedirectView.as_view(), name="google-login-redirect"),
+    path("google/callback/", views.GoogleCallbackView.as_view(), name="google-callback"),
 
     # Password reset & change endpoints
     path("password-reset/", views.PasswordResetRequestView.as_view(), name="password-reset-request"),
@@ -26,6 +28,6 @@ urlpatterns = [
     path("profile/completion/", views.ProfileCompletionView.as_view(), name="user-profile-completion"),
 
     # Public user & profile endpoints
-    path("<int:pk>/", views.UserDetailView.as_view(), name="user-detail"),
-    path("<int:pk>/profile/", views.PublicProfileDetailView.as_view(), name="user-public-profile"),
+    path("<uuid:public_id>/", views.UserDetailView.as_view(), name="user-detail"),
+    path("<uuid:public_id>/profile/", views.PublicProfileDetailView.as_view(), name="user-public-profile"),
 ]

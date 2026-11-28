@@ -3,32 +3,30 @@ from django.shortcuts import get_object_or_404
 
 from rest_framework import generics, serializers, status
 from rest_framework.exceptions import PermissionDenied
-from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
-
-from .models import Project, Skill, ProjectMember
-from .serializers import (
-    ProjectSerializer,
-    MyProjectsSerializer,
-    SkillSerializer,
-)
-
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
 
-from .models import Project, ProjectMember
+from .models import Project, Skill, ProjectMember
 from .permissions import IsCreatorOrReadOnly
 from .serializers import (
     ProjectSerializer,
     MyProjectsSerializer,
+    SkillSerializer,
     ProjectMemberSerializer,
 )
 
+from users.permissions import IsProfileComplete
 
 class ProjectListCreateView(generics.ListCreateAPIView):
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
-    permission_classes = [IsAuthenticatedOrReadOnly]
+
+    permission_classes = [
+        IsAuthenticatedOrReadOnly,
+        IsProfileComplete,
+    ]
+
     filter_backends = [SearchFilter]
     search_fields = ['title']
 
@@ -57,7 +55,9 @@ class ExploreProjectsView(generics.ListAPIView):
     serializer_class = ProjectSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
     filter_backends = [SearchFilter, OrderingFilter]
-    search_fields = ['title', 'description']
+
+    search_fields = ['title', 'description', 'skills__name']
+
     ordering_fields = ['created_at']
     ordering = ['-created_at']
 
@@ -74,7 +74,6 @@ class ExploreProjectsView(generics.ListAPIView):
         queryset = queryset.filter(status=status)
 
         skill_name = self.request.query_params.get('skill')
-
         if skill_name:
             skill_name = skill_name.strip()
 
@@ -84,8 +83,7 @@ class ExploreProjectsView(generics.ListAPIView):
 
         return queryset
 
-
-class ProjectMembersListView(generics.ListAPIView):
+class ProjectMembersView(generics.ListAPIView):
     serializer_class = ProjectMemberSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
 
@@ -104,13 +102,16 @@ class ProjectMemberDetailView(generics.DestroyAPIView):
     """
     permission_classes = [IsAuthenticated]
 
-    def delete(self, request, public_id, user_id):
-        project = get_object_or_404(Project, public_id=public_id)
+    def delete(self, request, public_id, member_public_id):
+        project = get_object_or_404(
+            Project,
+            public_id=public_id
+        )
 
         member = get_object_or_404(
-            ProjectMember,
+            ProjectMember.objects.select_related('user__profile'),
             project=project,
-            user_id=user_id
+            user__profile__public_id=member_public_id
         )
 
         is_creator = project.creator_id == request.user.id

@@ -1,8 +1,10 @@
-from django.contrib.auth import get_user_model
-from rest_framework import serializers
-from .models import Project, Skill, ProjectMember
 import re
-from django.db import transaction, IntegrityError
+
+from django.contrib.auth import get_user_model
+from django.db import IntegrityError, transaction
+from rest_framework import serializers
+
+from .models import Project, Skill, ProjectMember
 
 User = get_user_model()
 
@@ -10,30 +12,12 @@ SKILL_NAME_PATTERN = re.compile(
     r"(?=.*[A-Za-z])[A-Za-z0-9.+#][A-Za-z0-9 .+#&()/_-]*"
 )
 
-class SkillNameField(serializers.SlugRelatedField):
+class SkillNamesField(serializers.ListField):
+    def to_representation(self, data):
+        if hasattr(data, 'all'):
+            data = data.all()
 
-    def to_internal_value(self, data):
-        if not isinstance(data, str):
-            raise serializers.ValidationError(
-                "Skill name must be a string."
-            )
-
-        skill_name = data.strip()
-
-        if not SKILL_NAME_PATTERN.fullmatch(skill_name):
-            raise serializers.ValidationError(
-                "Skill names must use English characters, numbers, and supported symbols only."
-            )
-
-        try:
-            return self.get_queryset().get(name__iexact=skill_name)
-        except Skill.DoesNotExist:
-            raise serializers.ValidationError(
-                f"Skill '{skill_name}' does not exist. Use custom_skills to add a new skill."
-            )
-
-    def to_representation(self, value):
-        return value.name
+        return [skill.name for skill in data]
 
 class SkillSerializer(serializers.ModelSerializer):
     class Meta:
@@ -41,32 +25,36 @@ class SkillSerializer(serializers.ModelSerializer):
         fields = ['name']
 
 
-class ProjectMemberUserSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = User
-        fields = ['id', 'username', 'email']
-
-
 class ProjectMemberSerializer(serializers.ModelSerializer):
-    user = ProjectMemberUserSerializer(read_only=True)
+    user = serializers.SerializerMethodField()
 
     class Meta:
         model = ProjectMember
-        fields = ['id', 'user', 'joined_at']
+        fields = ['user', 'joined_at']
+
+    def get_user(self, obj):
+        profile = getattr(obj.user, 'profile', None)
+
+        return {
+            'public_id': str(profile.public_id) if profile else None,
+            'username': obj.user.username,
+            'name': profile.name if profile else '',
+        }
 
 
 class ProjectSerializer(serializers.ModelSerializer):
-    skills = SkillNameField(
-        many=True,
-        slug_field='name',
-        queryset=Skill.objects.all(),
+    creator = serializers.SerializerMethodField()
+    skills = SkillNamesField(
+        child=serializers.CharField(
+            max_length=100,
+            trim_whitespace=True
+        ),
         required=True,
         allow_empty=False
     )
 
-    remaining_capacity = serializers.SerializerMethodField()
-
     accepted_count = serializers.SerializerMethodField()
+    remaining_capacity = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
@@ -77,13 +65,12 @@ class ProjectSerializer(serializers.ModelSerializer):
             'description',
             'creator',
             'capacity',
-            'remaining_capacity',
             'accepted_count',
+            'remaining_capacity',
             'status',
             'project_type',
             'custom_project_type',
             'skills',
-            'custom_skills',
             'created_at',
             'updated_at',
         ]
@@ -93,107 +80,97 @@ class ProjectSerializer(serializers.ModelSerializer):
             'remaining_capacity',
             'created_at',
             'updated_at',
-
         ]
+
+    def get_creator(self, obj):
+        profile = getattr(obj.creator, 'profile', None)
+
+        return {
+            'public_id': str(profile.public_id) if profile else None,
+            'username': obj.creator.username,
+            'name': profile.name if profile else '',
+        }
+
+    def validate_skills(self, skills):
+        if not skills:
+            raise serializers.ValidationError(
+                "At least one skill is required."
+            )
+
+        if len(skills) > 15:
+            raise serializers.ValidationError(
+                "You can have up to 15 skills."
+            )
+
+        seen = set()
+
+        for name in skills:
+            normalized = name.casefold()
+
+            if not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9 .+#/&()_-]*",
+                name
+            ):
+                raise serializers.ValidationError(
+                    "Skill names must contain English characters only."
+                )
+
+            if normalized in seen:
+                raise serializers.ValidationError(
+                    "Duplicate skills are not allowed."
+                )
+
+            seen.add(normalized)
+
+        return skills
+
+    def get_or_create_skills(self, skill_names):
+        result = []
+
+        for name in skill_names:
+            skill = Skill.objects.filter(
+                name__iexact=name
+            ).first()
+
+            if skill is None:
+                try:
+                    with transaction.atomic():
+                        skill = Skill.objects.create(name=name)
+                except IntegrityError:
+                    skill = Skill.objects.get(name__iexact=name)
+
+            result.append(skill)
+
+        return result
+
+    def create(self, validated_data):
+        skill_names = validated_data.pop('skills', [])
+
+        with transaction.atomic():
+            project = super().create(validated_data)
+
+            skills = self.get_or_create_skills(skill_names)
+            project.skills.set(skills)
+
+        return project
+
+    def update(self, instance, validated_data):
+        skill_names = validated_data.pop('skills', None)
+
+        with transaction.atomic():
+            project = super().update(instance, validated_data)
+
+            if skill_names is not None:
+                skills = self.get_or_create_skills(skill_names)
+                project.skills.set(skills)
+
+        return project
 
     def get_accepted_count(self, obj):
         return obj.members.count()
 
     def get_remaining_capacity(self, obj):
-        return max(obj.capacity - obj.members.count(), 0)
-
-    def validate_custom_skills(self, value):
-        cleaned_skills = []
-        seen = set()
-
-        for skill_name in value:
-            skill_name = skill_name.strip()
-
-            if not skill_name:
-                raise serializers.ValidationError(
-                    "Skill names cannot be empty."
-                )
-
-            if not SKILL_NAME_PATTERN.fullmatch(skill_name):
-                raise serializers.ValidationError(
-                    "Skill names must use English characters, numbers, and supported symbols only."
-                )
-
-            normalized_name = skill_name.casefold()
-
-            if normalized_name not in seen:
-                cleaned_skills.append(skill_name)
-                seen.add(normalized_name)
-
-        return cleaned_skills
-
-    def get_or_create_skills(self, custom_skills):
-        skills = []
-
-        for skill_name in custom_skills:
-            try:
-                with transaction.atomic():
-                    skill, created = Skill.objects.get_or_create(
-                        name__iexact=skill_name,
-                        defaults={'name': skill_name}
-                    )
-            except IntegrityError:
-                skill = Skill.objects.get(name__iexact=skill_name)
-
-            skills.append(skill)
-
-        return skills
-
-    def validate_skills(self, value):
-        for skill in value:
-            if not SKILL_NAME_PATTERN.fullmatch(skill.name):
-                raise serializers.ValidationError(
-                    "All selected skills must use English names."
-                )
-
-        return value
-
-    def create(self, validated_data):
-        custom_skills = validated_data.pop('custom_skills', [])
-        selected_skills = validated_data.pop('skills', [])
-
-        with transaction.atomic():
-            new_skills = self.get_or_create_skills(custom_skills)
-
-            project = Project.objects.create(**validated_data)
-
-            all_skills = list({skill.id: skill for skill in selected_skills + new_skills}.values())
-
-            project.skills.set(all_skills)
-
-        return project
-
-
-    def update(self, instance, validated_data):
-        custom_skills = validated_data.pop('custom_skills', [])
-        selected_skills = validated_data.pop('skills', None)
-
-        with transaction.atomic():
-            new_skills = self.get_or_create_skills(custom_skills)
-
-            for attr, value in validated_data.items():
-                setattr(instance, attr, value)
-
-            instance.save()
-
-            if selected_skills is not None or custom_skills:
-                current_skills = list(instance.skills.all())
-
-                skills_to_add = selected_skills or []
-
-                all_skills = list({
-                    skill.id: skill
-                    for skill in current_skills + skills_to_add + new_skills
-                }.values())
-
-                instance.skills.set(all_skills)
-
-        return instance
+        return max(obj.capacity - self.get_accepted_count(obj), 0)
 
     def validate(self, attrs):
         project_type = attrs.get(
@@ -211,51 +188,20 @@ class ProjectSerializer(serializers.ModelSerializer):
                 'custom_project_type': 'Please specify your project type.'
             })
 
-        # Existing skills are retained during updates.
-        current_skills = (
-            list(self.instance.skills.all())
-            if self.instance else []
-        )
-
-        selected_skills = attrs.get('skills', [])
-        custom_skills = attrs.get('custom_skills', [])
-
-        # Count all unique skills that the project will have.
-        all_skill_ids = {skill.id for skill in current_skills}
-        all_skill_ids.update(skill.id for skill in selected_skills)
-
-        for skill_name in custom_skills:
-            existing_skill = Skill.objects.filter(
-                name__iexact=skill_name
-            ).first()
-
-            if existing_skill:
-                all_skill_ids.add(existing_skill.id)
-            else:
-                all_skill_ids.add(skill_name.casefold())
-
-        if not all_skill_ids:
-            raise serializers.ValidationError({
-                'skills': 'At least one skill is required.'
-            })
-
-        if len(all_skill_ids) > 15:
-            raise serializers.ValidationError({
-                'skills': 'You can select a maximum of 15 unique skills in total.'
-            })
-
         return attrs
 
     def validate_custom_project_type(self, value):
         value = value.strip()
 
-        if value and not SKILL_NAME_PATTERN.fullmatch(value):
+        if value and not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9 .+#/&()_-]*",
+            value
+        ):
             raise serializers.ValidationError(
                 "Project type must use English characters, numbers, and supported symbols only."
             )
 
         return value
-
 class MyProjectsSerializer(ProjectSerializer):
     role = serializers.SerializerMethodField()
 
